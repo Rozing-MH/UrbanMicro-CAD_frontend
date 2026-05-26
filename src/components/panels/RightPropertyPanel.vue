@@ -33,7 +33,7 @@
           <input
             type="checkbox"
             :checked="selectedSegment.isCurved"
-            @change="updateSegment({ isCurved: ($event.target as HTMLInputElement).checked })"
+            @change="onSegmentCurvedChange"
           />
         </div>
         <div class="prop-row">
@@ -181,6 +181,10 @@ function directionLabel(d: LaneDirection): string {
 function updateSegment(patch: Partial<RoadSegment>): void {
   if (!selectedSegment.value) return
   road.updateSegment(selectedSegment.value.id, patch)
+}
+
+function onSegmentCurvedChange(ev: Event): void {
+  updateSegment({ isCurved: (ev.target as HTMLInputElement).checked })
 }
 
 function onElevationModeChange(ev: Event): void {

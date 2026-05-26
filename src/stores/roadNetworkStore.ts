@@ -42,6 +42,10 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
   const segmentCount = computed(() => segments.value.size)
   const isDrawing = computed(() => drawingContext.value.state !== 'IDLE')
 
+  function laneArrowKey(arrow: Pick<LaneArrow, 'nodeId' | 'laneId'>): string {
+    return `${arrow.nodeId}:${arrow.laneId}`
+  }
+
   function addNode(node: RoadNode): void {
     nodes.value.set(node.id, node)
     topologyVersion.value++
@@ -195,7 +199,7 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     nodes.value = new Map(data.nodes.map((n) => [n.id, n]))
     segments.value = new Map(data.segments.map((s) => [s.id, s]))
     lanes.value = new Map(data.lanes.map((l) => [l.id, l]))
-    laneArrows.value = new Map(data.laneArrows.map((a) => [a.id, a]))
+    laneArrows.value = new Map(data.laneArrows.map((a) => [laneArrowKey(a), a]))
     halfEdges.value = new Map(data.halfEdges.map((e) => [e.id, e]))
     topologyVersion.value = data.version
   }

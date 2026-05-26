@@ -41,14 +41,14 @@ function idmAcceleration(
   s0: number,
 ): number {
   if (!ctx.idmParams) return 0
-  const { desiredTimeHeadway, maxAcceleration, comfortDeceleration, minimumGap } =
+  const { safeTimeHeadway, maxAcceleration, comfortableDeceleration, minGap, delta } =
     ctx.idmParams as IDMParams
-  const T_ = T || desiredTimeHeadway
+  const T_ = T || safeTimeHeadway
   const a_ = a || maxAcceleration
-  const b_ = b || comfortDeceleration
-  const s0_ = s0 || minimumGap
+  const b_ = b || comfortableDeceleration
+  const s0_ = s0 || minGap
   const sStar = s0_ + Math.max(0, v * T_ + (v * deltaV) / (2 * Math.sqrt(a_ * b_)))
-  const freeRoad = 1 - Math.pow(v / v0, 4)
+  const freeRoad = 1 - Math.pow(v / v0, delta)
   const interaction = Math.pow(sStar / Math.max(s, 0.1), 2)
   return a_ * (freeRoad - interaction)
 }
@@ -62,28 +62,39 @@ function flushToBuffer(): void {
     ctx.vehicleBuffer[base] = veh.progress
     ctx.vehicleBuffer[base + 1] = veh.currentSpeed
     ctx.vehicleBuffer[base + 2] = veh.lateralOffset
-    ctx.vehicleBuffer[base + 3] = veh.laneChangeState === 'IDLE' ? 0 : 1
+    ctx.vehicleBuffer[base + 3] = veh.laneChangeState === 'NONE' ? 0 : 1
     i++
   }
 }
 
+function resolveOriginLaneId(fromNodeId: string): string | null {
+  if (!ctx.topology) return null
+  const originSegment = ctx.topology.segments.find(
+    (segment) => segment.startNodeId === fromNodeId || segment.endNodeId === fromNodeId,
+  )
+  if (!originSegment) return null
+  return ctx.topology.lanes.find((lane) => lane.segmentId === originSegment.id)?.id ?? null
+}
+
 function spawnVehicles(dt: number): void {
   if (!ctx.odMatrix || !ctx.topology) return
-  for (const entry of ctx.odMatrix.entries) {
-    const rate = entry.vehiclesPerHour / 3600
+  for (const entry of ctx.odMatrix.pairs) {
+    const rate = entry.volumePerHour / 3600
     if (Math.random() < rate * dt) {
+      const originLaneId = resolveOriginLaneId(entry.fromNodeId)
+      if (!originLaneId) continue
       const vehicleId = `v_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
       const newVehicle: SimVehicle = {
         id: vehicleId,
         type: 'CAR',
-        currentLaneId: entry.originLaneId,
+        currentLaneId: originLaneId,
         progress: 0,
         currentSpeed: 10,
         lateralOffset: 0,
         targetLaneId: null,
-        laneChangeState: 'IDLE',
+        laneChangeState: 'NONE',
         laneChangeProgress: 0,
-        plannedRoute: [entry.originLaneId],
+        plannedRoute: [{ laneId: originLaneId }],
         currentRouteIndex: 0,
         totalDistanceTraveled: 0,
         spawnTime: ctx.time,

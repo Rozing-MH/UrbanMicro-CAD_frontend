@@ -10,6 +10,7 @@ import type {
 import {
   DEFAULT_IDM,
   DEFAULT_MOBIL,
+  DEFAULT_VEHICLE_MIX,
   VEHICLE_BUFFER_STRIDE,
   MAX_VEHICLES,
 } from '@/types/simulation'
@@ -25,13 +26,12 @@ export const useSimulationStore = defineStore('simulation', () => {
   const vehicles = ref<Map<string, SimVehicle>>(new Map())
 
   const odMatrix = ref<ODMatrix>({
-    version: 1,
-    entries: [],
-    timeWindowSeconds: 3600,
+    pairs: [],
   })
 
   const idmParams = ref<IDMParams>({ ...DEFAULT_IDM })
   const mobilParams = ref<MOBILParams>({ ...DEFAULT_MOBIL })
+  const vehicleMix = ref({ ...DEFAULT_VEHICLE_MIX })
 
   const stats = ref<SimulationStats>({
     totalVehicles: 0,
@@ -118,7 +118,7 @@ export const useSimulationStore = defineStore('simulation', () => {
 
   return {
     state, currentTime, simulatedDuration, timeScale, vehicleCount, vehicles,
-    odMatrix, idmParams, mobilParams, stats,
+    odMatrix, idmParams, mobilParams, vehicleMix, stats,
     isRunning, progress,
     initSharedBuffer, getSharedBuffer, getVehicleView,
     setState, setCurrentTime, setVehicleCount, setTimeScale, setSimulatedDuration,

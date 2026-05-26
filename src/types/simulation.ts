@@ -60,6 +60,16 @@ export interface VehicleMixConfig {
   ratios: { type: VehicleType; ratio: number }[]
 }
 
+export const DEFAULT_VEHICLE_MIX: VehicleMixConfig = {
+  ratios: [
+    { type: 'CAR', ratio: 0.82 },
+    { type: 'BUS', ratio: 0.06 },
+    { type: 'TRUCK', ratio: 0.08 },
+    { type: 'BIKE', ratio: 0.04 },
+    { type: 'TRAM', ratio: 0 },
+  ],
+}
+
 export interface MOBILParams {
   bSafe: number
   politenessFactor: number
@@ -83,6 +93,24 @@ export interface IDMParams {
   delta: number
 }
 
+export const DEFAULT_IDM: IDMParams = {
+  desiredSpeed: 13.9,
+  safeTimeHeadway: 1.5,
+  minGap: 2.0,
+  maxAcceleration: 1.4,
+  comfortableDeceleration: 2.0,
+  delta: 4,
+}
+
+export interface SimulationStats {
+  totalVehicles: number
+  completedVehicles: number
+  averageSpeed: number
+  averageDelay: number
+  maxQueueLength: number
+  throughput: number
+}
+
 export type SimulationStatus = 'STOPPED' | 'RUNNING' | 'PAUSED'
 
 export interface SimulationConfig {
@@ -92,6 +120,7 @@ export interface SimulationConfig {
   odMatrix: ODMatrix | null
   vehicleMix: VehicleMixConfig
   mobilParams: MOBILParams
+  idmParams: IDMParams
   useDefaultRandomFlow: boolean
 }
 

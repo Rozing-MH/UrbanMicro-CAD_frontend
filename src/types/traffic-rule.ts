@@ -1,4 +1,5 @@
 import type { TurnDirection } from './road-network'
+import type { ODMatrix, VehicleMixConfig } from './simulation'
 
 // ============================================================
 // Traffic Light / Signal Control
@@ -95,8 +96,41 @@ export interface Crosswalk {
 // Rule Data (serialized)
 // ============================================================
 
+export interface LaneArrowRule {
+  laneId: string
+  nodeId: string
+  allowedDirections: TurnDirection[]
+}
+
+export interface RuleSetLaneRestriction {
+  laneId: string
+  restriction: LaneRestriction
+}
+
+export interface TrafficRuleSetData {
+  nodeId: string
+  nodeControlMode: 'YIELD' | 'TRAFFIC_LIGHT' | 'ROUNDABOUT' | 'NONE'
+  crosswalkEnabled: boolean
+  turnRestrictions: TurnRestriction[]
+  laneArrows: LaneArrowRule[]
+  laneConnectors: LaneConnector[]
+  trafficLight: TrafficLightController | null
+  laneRestrictions: RuleSetLaneRestriction[]
+  crosswalks?: Crosswalk[]
+}
+
+export interface RuleODConfig {
+  pairs: ODMatrix['pairs']
+  vehicleMix: VehicleMixConfig
+}
+
 export interface RuleData {
-  version: number
+  ruleSets: TrafficRuleSetData[]
+  odConfig: RuleODConfig
+}
+
+export interface LegacyRuleData {
+  version?: number
   laneRestrictions: LaneRestriction[]
   laneConnectors: LaneConnector[]
   trafficLights: TrafficLightController[]

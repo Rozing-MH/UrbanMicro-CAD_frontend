@@ -65,7 +65,7 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
 
     const geo = new THREE.SphereGeometry(1.2, 16, 12)
     const mesh = new THREE.Mesh(geo, nodeMaterial)
-    mesh.position.set(node.position.x, node.position.z + 0.1, node.position.y)
+    mesh.position.set(node.position.x, node.elevation + 0.1, node.position.y)
     mesh.userData.nodeId = node.id
     scene.value.add(mesh)
     nodeMarkers.set(node.id, mesh)

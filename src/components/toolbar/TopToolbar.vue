@@ -122,7 +122,7 @@ async function onSave(): Promise<void> {
     await projectApi.save(project.currentProject.id, {
       meta: project.currentProject,
       topology: topology.value,
-      rules: ruleStore.serialize(),
+      rules: ruleStore.serialize(simStore.odMatrix, simStore.vehicleMix),
       odMatrix: simStore.odMatrix,
     })
     project.markSaved()

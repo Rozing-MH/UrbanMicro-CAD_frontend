@@ -10,7 +10,7 @@ export interface ProjectMeta {
   description: string
   createdAt: string
   updatedAt: string
-  ownerId: string
+  ownerId?: string
   thumbnail?: string
 }
 
@@ -19,6 +19,19 @@ export interface ProjectSnapshot {
   topology: TopologyData
   rules: RuleData
   odMatrix: ODMatrix
+}
+
+export interface ProjectDTO {
+  id: string
+  name: string
+  description: string
+  topologyData: TopologyData
+  ruleData: RuleData
+  version: number
+  createdAt: string
+  updatedAt: string
+  ownerId?: string
+  thumbnailUrl?: string
 }
 
 export const useProjectStore = defineStore('project', () => {
