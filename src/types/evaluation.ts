@@ -43,6 +43,25 @@ export interface HeatmapConfig {
   colorStops: { value: number; color: [number, number, number] }[]
 }
 
+export interface SegmentMetric {
+  segmentId: string
+  avgSpeed: number
+  density: number
+  volume: number
+  delay: number
+  los: LOSGrade
+  updatedAt: number
+}
+
+export interface EvaluationResult {
+  nodeId: string
+  averageDelay: number
+  grade: LOSGrade
+  throughput: number
+  queueLength: number
+  updatedAt: number
+}
+
 export const DEFAULT_HEATMAP_STOPS = [
   { value: 0.0, color: [0.0, 0.8, 0.0] as [number, number, number] },
   { value: 0.5, color: [1.0, 1.0, 0.0] as [number, number, number] },

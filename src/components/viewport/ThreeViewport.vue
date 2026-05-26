@@ -12,7 +12,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, type Ref } from 'vue'
 import * as THREE from 'three'
 import { useThreeRenderer } from '@/composables/useThreeRenderer'
 import { useRoadRenderer } from '@/composables/useRoadRenderer'
@@ -26,7 +26,6 @@ import { useSimulationStore } from '@/stores/simulationStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
 import { historyStack } from '@/commands/HistoryStack'
 import { AddSegmentCommand } from '@/commands/roadCommands'
-import { triangulateRibbon } from '@/adapters/DelaunayTriangulator'
 import type { Point2D, RoadSegment, RoadNode, CrossSectionProfile } from '@/types'
 
 const DEFAULT_PROFILE: CrossSectionProfile = {
@@ -46,12 +45,20 @@ const roadStore = useRoadNetworkStore()
 const editorStore = useEditorStateStore()
 const simStore = useSimulationStore()
 const evaluationStore = useEvaluationStore()
-const renderer = useThreeRenderer()
-const roadRenderer = useRoadRenderer()
-const vehicleRenderer = useVehicleRenderer()
-const cameraControls = useCameraControls()
-const heatmap = useHeatmap()
-const groundGrid = useGroundGrid()
+
+// Pass containerRef at construction — renderer auto-inits via its own onMounted
+const renderer = useThreeRenderer(containerRef)
+
+// Derive reactive scene/camera refs from renderer state
+const sceneRef = computed(() => renderer.state.value?.scene ?? null) as Ref<THREE.Scene | null>
+const cameraRef = computed(() => renderer.state.value?.camera ?? null) as Ref<THREE.PerspectiveCamera | null>
+
+// Pass scene/camera refs to all dependant composables
+const roadRenderer = useRoadRenderer(sceneRef)
+const vehicleRenderer = useVehicleRenderer(sceneRef)
+const cameraControls = useCameraControls(cameraRef, containerRef)
+const heatmap = useHeatmap(sceneRef)
+const groundGrid = useGroundGrid(sceneRef)
 
 function genId(): string {
   return Math.random().toString(36).slice(2, 11) + Date.now().toString(36)
@@ -83,9 +90,9 @@ const pointer = new THREE.Vector2()
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 
 function screenToWorld(event: MouseEvent): Point2D | null {
-  const { container, camera } = renderer.state
-  if (!container || !camera) return null
-  const rect = container.getBoundingClientRect()
+  const camera = cameraRef.value
+  if (!camera || !containerRef.value) return null
+  const rect = containerRef.value.getBoundingClientRect()
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
   raycaster.setFromCamera(pointer, camera)
@@ -102,36 +109,18 @@ function snapPoint(p: Point2D): Point2D {
   return { x: Math.round(p.x / grid) * grid, y: Math.round(p.y / grid) * grid }
 }
 
-function buildSegmentMesh(start: Point2D, end: Point2D, width: number) {
-  const dx = end.x - start.x
-  const dy = end.y - start.y
-  const len = Math.sqrt(dx * dx + dy * dy)
-  if (len < 0.001) {
-    return { positions: new Float32Array(), indices: new Uint32Array(), uvs: new Float32Array() }
-  }
-  const nx = -dy / len
-  const ny = dx / len
-  const half = width / 2
-  const left: Point2D[] = [
-    { x: start.x + nx * half, y: start.y + ny * half },
-    { x: end.x + nx * half, y: end.y + ny * half }
-  ]
-  const right: Point2D[] = [
-    { x: start.x - nx * half, y: start.y - ny * half },
-    { x: end.x - nx * half, y: end.y - ny * half }
-  ]
-  return triangulateRibbon(left, right)
-}
-
 let previewMesh: THREE.Line | null = null
 
-function drawPreviewLine(a: Point2D, b: Point2D) {
-  const { scene } = renderer.state
+function drawPreviewLine(a: Point2D, b: Point2D): void {
+  const scene = sceneRef.value
   if (!scene) return
-  if (previewMesh) { scene.remove(previewMesh); previewMesh.geometry.dispose() }
+  if (previewMesh) {
+    scene.remove(previewMesh)
+    previewMesh.geometry.dispose()
+  }
   const geom = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(a.x, 0.1, a.y),
-    new THREE.Vector3(b.x, 0.1, b.y)
+    new THREE.Vector3(b.x, 0.1, b.y),
   ])
   const mat = new THREE.LineDashedMaterial({ color: 0x00aaff, dashSize: 1, gapSize: 0.5 })
   previewMesh = new THREE.Line(geom, mat)
@@ -139,8 +128,8 @@ function drawPreviewLine(a: Point2D, b: Point2D) {
   scene.add(previewMesh)
 }
 
-function clearPreview() {
-  const { scene } = renderer.state
+function clearPreview(): void {
+  const scene = sceneRef.value
   if (previewMesh && scene) {
     scene.remove(previewMesh)
     previewMesh.geometry.dispose()
@@ -148,7 +137,7 @@ function clearPreview() {
   }
 }
 
-function onPointerMove(event: MouseEvent) {
+function onPointerMove(event: MouseEvent): void {
   const world = screenToWorld(event)
   if (!world) return
   const snapped = snapPoint(world)
@@ -171,22 +160,35 @@ function findOrCreateNode(point: Point2D): { id: string; created: boolean; node:
   return {
     id,
     created: true,
-    node: { id, position: point, elevation: 0, controlMode: 'NONE', connectedSegmentIds: [], polygonVertices: [] },
+    node: {
+      id,
+      position: point,
+      elevation: 0,
+      controlMode: 'NONE',
+      connectedSegmentIds: [],
+      polygonVertices: [],
+    },
   }
 }
 
-async function handleRoadDraw(point: Point2D) {
+async function handleRoadDraw(point: Point2D): Promise<void> {
   const ctx = roadStore.drawingContext
   if (ctx.state === 'IDLE') {
     const found = findOrCreateNode(point)
-    if (found.created) { roadStore.addNode(found.node); roadRenderer.addNode(found.node) }
-    roadStore.startDrawing(roadStore.drawingContext.mode, point, found.id)
+    if (found.created) {
+      roadStore.addNode(found.node)
+      roadRenderer.addNode(found.node)
+    }
+    roadStore.startDrawing(ctx.mode, point, found.id)
   } else if (ctx.state === 'DRAWING' && ctx.startNodeId) {
     const found = findOrCreateNode(point)
     if (found.id === ctx.startNodeId) return
     const startNode = roadStore.getNode(ctx.startNodeId)
     if (!startNode) return
-    if (found.created) { roadStore.addNode(found.node); roadRenderer.addNode(found.node) }
+    if (found.created) {
+      roadStore.addNode(found.node)
+      roadRenderer.addNode(found.node)
+    }
     const dx = point.x - startNode.position.x
     const dy = point.y - startNode.position.y
     const segment: RoadSegment = {
@@ -199,31 +201,32 @@ async function handleRoadDraw(point: Point2D) {
       isCurved: false,
       length: Math.sqrt(dx * dx + dy * dy),
     }
-    const cmd = new AddSegmentCommand(segment, null, null)
+    const cmd = new AddSegmentCommand(segment, startNode, found.node, false, found.created)
     await historyStack.execute(cmd)
     roadRenderer.addSegment(segment)
     clearPreview()
-    roadStore.startDrawing(roadStore.drawingContext.mode, point, found.id)
+    roadStore.startDrawing(ctx.mode, point, found.id)
   }
 }
 
-function handleSelect(event: MouseEvent) {
-  const { scene, camera, container } = renderer.state
-  if (!scene || !camera || !container) return
-  const rect = container.getBoundingClientRect()
+function handleSelect(event: MouseEvent): void {
+  const camera = cameraRef.value
+  if (!camera || !containerRef.value) return
+  const rect = containerRef.value.getBoundingClientRect()
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
   raycaster.setFromCamera(pointer, camera)
-  const intersects = raycaster.intersectObjects(roadRenderer.getSegmentMeshes(), false)
+  const meshes = Array.from(roadRenderer.segmentMeshes.values())
+  const intersects = raycaster.intersectObjects(meshes, false)
   if (intersects.length > 0) {
-    const id = intersects[0].object.userData.segmentId
+    const id = intersects[0].object.userData.segmentId as string | undefined
     if (id) roadStore.selectSegment(id)
   } else {
     roadStore.clearSelection()
   }
 }
 
-async function onPointerDown(event: MouseEvent) {
+async function onPointerDown(event: MouseEvent): Promise<void> {
   if (event.button !== 0) return
   const world = screenToWorld(event)
   if (!world) return
@@ -232,48 +235,50 @@ async function onPointerDown(event: MouseEvent) {
   else if (editorStore.activeTool === 'SELECT') handleSelect(event)
 }
 
-function onKeyDown(event: KeyboardEvent) {
+function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     roadStore.cancelDrawing()
     clearPreview()
   } else if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
     event.preventDefault()
     historyStack.undo()
-  } else if ((event.ctrlKey || event.metaKey) && (event.key === 'y' || (event.shiftKey && event.key === 'Z'))) {
+  } else if (
+    (event.ctrlKey || event.metaKey) &&
+    (event.key === 'y' || (event.shiftKey && event.key === 'Z'))
+  ) {
     event.preventDefault()
     historyStack.redo()
   }
 }
 
-watch(() => evaluationStore.evalMode, () => {
-  if (evaluationStore.evalMode === 'NONE') {
-    heatmap.clearHeatmap()
-    return
-  }
-  for (const segment of roadStore.segments.values()) {
-    const metric = evaluationStore.segmentMetrics.get(segment.id)
-    if (!metric || !segment.meshData) continue
-    let value = 0
-    switch (evaluationStore.evalMode) {
-      case 'SPEED': value = metric.avgSpeed / 30; break
-      case 'DENSITY': value = metric.density / 100; break
-      case 'DELAY': value = metric.delay / 60; break
-      case 'LOS': value = 'ABCDEF'.indexOf(metric.los) / 5; break
+watch(
+  () => evaluationStore.evalMode,
+  () => {
+    if (evaluationStore.evalMode === 'NONE') {
+      heatmap.clearHeatmap()
+      return
     }
-    heatmap.updateSegmentHeatmap(segment.id, segment.meshData, value)
-  }
-})
+    for (const segment of roadStore.segments.values()) {
+      const metric = evaluationStore.segmentMetrics.get(segment.id)
+      if (!metric) continue
+      const existingMesh = roadRenderer.segmentMeshes.get(segment.id)
+      heatmap.updateSegmentHeatmap(
+        segment.id,
+        existingMesh,
+        metric,
+        evaluationStore.heatmapConfig,
+      )
+    }
+  },
+)
 
 onMounted(() => {
-  if (!containerRef.value) return
-  renderer.init(containerRef.value)
-  roadRenderer.attach(renderer.state.scene!)
-  vehicleRenderer.attach(renderer.state.scene!)
-  heatmap.attach(renderer.state.scene!)
-  groundGrid.attach(renderer.state.scene!)
-  cameraControls.attach(renderer.state.camera!, renderer.state.container!)
-  containerRef.value.addEventListener('pointermove', onPointerMove)
-  containerRef.value.addEventListener('pointerdown', onPointerDown)
+  // renderer.state.value is already set by the composable's own onMounted
+  vehicleRenderer.init()
+  groundGrid.init()
+  cameraControls.attach()
+  containerRef.value?.addEventListener('pointermove', onPointerMove)
+  containerRef.value?.addEventListener('pointerdown', onPointerDown)
   window.addEventListener('keydown', onKeyDown)
   for (const seg of roadStore.segments.values()) roadRenderer.addSegment(seg)
   for (const node of roadStore.nodes.values()) roadRenderer.addNode(node)
@@ -287,7 +292,12 @@ onMounted(() => {
           const pts = (seg?.centerLine ?? []).map(p => new THREE.Vector3(p.x, 0, p.y))
           lanePositions.set(lane.id, pts)
         }
-        vehicleRenderer.updateFromBuffer(buf, simStore.vehicleCount, lanePositions, Array.from(roadStore.lanes.keys()))
+        vehicleRenderer.updateFromBuffer(
+          buf,
+          simStore.vehicleCount,
+          lanePositions,
+          Array.from(roadStore.lanes.keys()),
+        )
       }
     }
   })

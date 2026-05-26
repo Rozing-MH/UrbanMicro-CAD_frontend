@@ -96,7 +96,7 @@ export interface Crosswalk {
 // ============================================================
 
 export interface RuleData {
-  version: string
+  version: number
   laneRestrictions: LaneRestriction[]
   laneConnectors: LaneConnector[]
   trafficLights: TrafficLightController[]

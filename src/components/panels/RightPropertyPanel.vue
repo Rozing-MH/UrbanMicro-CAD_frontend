@@ -116,23 +116,19 @@
       <section v-else-if="selectedLight" class="prop-group">
         <h3 class="prop-title">信号灯控制器</h3>
         <div class="prop-row">
-          <label>类型</label>
-          <select :value="selectedLight.type" @change="onLightTypeChange">
-            <option value="FIXED_TIME">固定时间</option>
-            <option value="ADAPTIVE">自适应</option>
+          <label>策略</label>
+          <select :value="selectedLight.strategy" @change="onLightStrategyChange">
+            <option value="FIXED">固定时间</option>
+            <option value="ACTUATED">感应控制</option>
           </select>
         </div>
         <div class="prop-row">
           <label>周期 (s)</label>
-          <input
-            type="number"
-            :value="selectedLight.cycleLength"
-            @change="onCycleChange"
-          />
+          <span>{{ cycleLength.toFixed(1) }}</span>
         </div>
         <div class="prop-row">
           <label>阶段数</label>
-          <span>{{ selectedLight.phases.length }}</span>
+          <span>{{ selectedLight.steps.length }}</span>
         </div>
       </section>
     </div>
@@ -229,16 +225,18 @@ function onControlModeChange(ev: Event): void {
   road.updateNode(selectedNode.value.id, { controlMode })
 }
 
-function onLightTypeChange(ev: Event): void {
-  if (!selectedLight.value) return
-  const type = (ev.target as HTMLSelectElement).value as 'FIXED_TIME' | 'ADAPTIVE'
-  rules.updateTrafficLight(selectedLight.value.id, { type })
-}
+const cycleLength = computed<number>(() => {
+  if (!selectedLight.value) return 0
+  return selectedLight.value.steps.reduce(
+    (sum, s) => sum + s.minGreenTime + s.yellowTime + s.allRedTime,
+    0,
+  )
+})
 
-function onCycleChange(ev: Event): void {
+function onLightStrategyChange(ev: Event): void {
   if (!selectedLight.value) return
-  const cycleLength = Number((ev.target as HTMLInputElement).value)
-  rules.updateTrafficLight(selectedLight.value.id, { cycleLength })
+  const strategy = (ev.target as HTMLSelectElement).value as 'FIXED' | 'ACTUATED'
+  rules.updateTrafficLight(selectedLight.value.id, { strategy })
 }
 </script>
 

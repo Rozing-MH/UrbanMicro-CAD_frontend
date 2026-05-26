@@ -34,7 +34,7 @@ export function useHeatmap(scene: Ref<THREE.Scene | null>) {
 
   function createHeatmapMaterial(value: number, config: HeatmapConfig): THREE.ShaderMaterial {
     const normalizedValue = Math.max(0, Math.min(1, (value - config.minValue) / (config.maxValue - config.minValue)))
-    const stops = config.stops
+    const stops = config.colorStops
     const low = stops[0].color
     const mid = stops[Math.floor(stops.length / 2)].color
     const high = stops[stops.length - 1].color

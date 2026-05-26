@@ -182,7 +182,7 @@ export interface DrawingContext {
 // ============================================================
 
 export interface TopologyData {
-  version: string
+  version: number
   nodes: RoadNode[]
   segments: RoadSegment[]
   lanes: Lane[]

@@ -10,7 +10,8 @@ export const useEvaluationStore = defineStore('evaluation', () => {
   const results = ref<Map<string, EvaluationResult>>(new Map())
   const segmentMetrics = ref<Map<string, SegmentMetric>>(new Map())
   const heatmapConfig = ref<HeatmapConfig>({
-    stops: DEFAULT_HEATMAP_STOPS,
+    mode: 'OFF',
+    colorStops: DEFAULT_HEATMAP_STOPS,
     minValue: 0,
     maxValue: 80,
   })
