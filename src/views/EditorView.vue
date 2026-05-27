@@ -20,8 +20,15 @@
 
     <BottomTimeline />
 
-    <div v-if="editor.errorMessage" class="toast-error" @click="editor.setError('')">
-      {{ editor.errorMessage }}
+    <div
+      v-if="editor.notification"
+      class="toast"
+      :class="editor.notification.type"
+      :role="editor.notification.type === 'error' ? 'alert' : 'status'"
+      @click="editor.dismissNotification(editor.notification.id)"
+    >
+      <span class="toast-type">{{ notificationLabel(editor.notification.type) }}</span>
+      <span>{{ editor.notification.message }}</span>
     </div>
   </div>
 </template>
@@ -34,7 +41,7 @@ import LeftAssetPanel from '@/components/panels/LeftAssetPanel.vue'
 import RightPropertyPanel from '@/components/panels/RightPropertyPanel.vue'
 import BottomTimeline from '@/components/panels/BottomTimeline.vue'
 import ThreeViewport from '@/components/viewport/ThreeViewport.vue'
-import { useEditorStateStore } from '@/stores/editorStateStore'
+import { useEditorStateStore, type NotificationType } from '@/stores/editorStateStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
@@ -84,12 +91,23 @@ onBeforeRouteLeave((_to, _from, next) => {
 })
 
 onBeforeUnmount(() => {
+  editor.dismissNotification()
   disposeWorkers()
   road.clear()
   rules.clear()
   sim.reset()
   project.setCurrentProject(null)
 })
+
+function notificationLabel(type: NotificationType): string {
+  const labels: Record<NotificationType, string> = {
+    error: '错误',
+    warning: '警告',
+    info: '提示',
+    success: '完成',
+  }
+  return labels[type]
+}
 
 function backToDashboard(): void {
   void router.push('/dashboard')
@@ -130,16 +148,25 @@ function backToDashboard(): void {
   border-radius: var(--radius-md); font-size: 12px;
 }
 .back-btn:hover { background: #356eb0; }
-.toast-error {
+.toast {
   position: fixed; bottom: 20px; left: 50%;
+  display: flex; align-items: center; gap: 10px;
   transform: translateX(-50%);
-  padding: 8px 18px;
-  background: rgba(161, 60, 60, 0.95);
+  max-width: min(640px, calc(100vw - 32px));
+  padding: 9px 18px;
   color: #fff; font-size: 12px;
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   cursor: pointer; z-index: 1000;
   animation: slideUp var(--duration-normal) var(--ease-out);
+}
+.toast.error { background: rgba(161, 60, 60, 0.95); }
+.toast.warning { background: rgba(194, 128, 38, 0.96); }
+.toast.info { background: rgba(44, 93, 153, 0.96); }
+.toast.success { background: rgba(55, 132, 91, 0.96); }
+.toast-type {
+  font-weight: 700;
+  white-space: nowrap;
 }
 @keyframes slideUp {
   from { transform: translate(-50%, 20px); opacity: 0; }

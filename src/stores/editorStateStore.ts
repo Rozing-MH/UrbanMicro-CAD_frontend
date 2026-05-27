@@ -17,6 +17,20 @@ export type ToolMode =
   | 'PAN'
 
 export type ViewMode = 'EDIT' | 'SIMULATION' | 'EVALUATION' | 'TRAFFIC_VOLUME' | 'TRAFFIC_ROUTES'
+export type NotificationType = 'error' | 'warning' | 'info' | 'success'
+
+export interface EditorNotification {
+  id: string
+  type: NotificationType
+  message: string
+  durationMs?: number
+}
+
+export interface ShowNotificationInput {
+  type: NotificationType
+  message: string
+  durationMs?: number
+}
 
 export type PanelState = {
   leftPanelOpen: boolean
@@ -41,7 +55,7 @@ export const useEditorStateStore = defineStore('editorState', () => {
 
   const isLoading = ref(false)
   const loadingMessage = ref('')
-  const errorMessage = ref<string | null>(null)
+  const notification = ref<EditorNotification | null>(null)
   const snapToGrid = ref(true)
   const snapToRoad = ref(true)
   const gridSize = ref(1)
@@ -56,6 +70,19 @@ export const useEditorStateStore = defineStore('editorState', () => {
   const historyLength = ref(0)
   const canUndo = computed(() => historyPointer.value >= 0)
   const canRedo = computed(() => historyPointer.value < historyLength.value - 1)
+  const errorMessage = computed(() => notification.value?.type === 'error' ? notification.value.message : null)
+
+  let notificationTimer: ReturnType<typeof window.setTimeout> | null = null
+
+  function createNotificationId(): string {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  function clearNotificationTimer(): void {
+    if (!notificationTimer) return
+    window.clearTimeout(notificationTimer)
+    notificationTimer = null
+  }
 
   function setActiveTool(tool: ToolMode): void {
     activeTool.value = tool
@@ -83,12 +110,31 @@ export const useEditorStateStore = defineStore('editorState', () => {
     loadingMessage.value = message
   }
 
+  function dismissNotification(id?: string): void {
+    if (id && notification.value?.id !== id) return
+    notification.value = null
+    clearNotificationTimer()
+  }
+
+  function showNotification(input: ShowNotificationInput): void {
+    clearNotificationTimer()
+    const id = createNotificationId()
+    notification.value = { ...input, id }
+    if (input.durationMs && input.durationMs > 0) {
+      notificationTimer = window.setTimeout(() => dismissNotification(id), input.durationMs)
+    }
+  }
+
   function setError(message: string | null): void {
-    errorMessage.value = message
+    if (!message) {
+      dismissNotification()
+      return
+    }
+    showNotification({ type: 'error', message })
   }
 
   function clearError(): void {
-    errorMessage.value = null
+    dismissNotification()
   }
 
   function toggleSnap(): void {
@@ -118,12 +164,13 @@ export const useEditorStateStore = defineStore('editorState', () => {
 
   return {
     activeTool, viewMode, cameraPosition, cameraTarget, zoomLevel,
-    panelState, isLoading, loadingMessage, errorMessage,
+    panelState, isLoading, loadingMessage, notification, errorMessage,
     snapToGrid, snapToRoad, gridSize, showGrid, showMeasurements, showNodeIds,
     continuousDrawing, activeProfileId, renderLOD,
     historyPointer, historyLength, canUndo, canRedo,
     setActiveTool, setViewMode, updateCamera, setZoom, setPanelState,
-    setLoading, setError, clearError, toggleSnap, setGridSize, setActiveProfile,
+    setLoading, showNotification, dismissNotification, setError, clearError,
+    toggleSnap, setGridSize, setActiveProfile,
     toggleContinuousDrawing, toggleGrid,
     updateHistoryState,
   }

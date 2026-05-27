@@ -135,6 +135,7 @@ async function onSave(): Promise<void> {
       odMatrix: simStore.odMatrix,
     })
     project.markSaved()
+    editor.showNotification({ type: 'success', message: '项目已保存', durationMs: 2500 })
   } catch (err) {
     editor.setError(err instanceof Error ? err.message : '保存失败')
   } finally {

@@ -328,7 +328,10 @@ async function handleRoadUpgrade(event: MouseEvent): Promise<void> {
     command = new UpgradeSegmentCommand(segment.id, profile, meshData)
     await historyStack.execute(command)
   } catch {
-    editorStore.setError(command?.conflictMessage ?? '断面升级失败，请检查当前路段与规则配置')
+    editorStore.showNotification({
+      type: command?.conflictMessage ? 'warning' : 'error',
+      message: command?.conflictMessage ?? '断面升级失败，请检查当前路段与规则配置',
+    })
     return
   }
 
