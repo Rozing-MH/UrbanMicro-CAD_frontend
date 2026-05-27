@@ -321,13 +321,20 @@ async function handleRoadUpgrade(event: MouseEvent): Promise<void> {
   const segment = roadStore.getSegment(picked.segmentId)
   if (!segment) return
   const profile = getProfileById(editorStore.activeProfileId)
-  const meshData = await buildRoadMesh(segment.centerLine, profile, segment.elevation.startZ)
-  const command = new UpgradeSegmentCommand(segment.id, profile, meshData)
-  await historyStack.execute(command)
+  let command: UpgradeSegmentCommand | null = null
+
+  try {
+    const meshData = await buildRoadMesh(segment.centerLine, profile, segment.elevation.startZ)
+    command = new UpgradeSegmentCommand(segment.id, profile, meshData)
+    await historyStack.execute(command)
+  } catch {
+    editorStore.setError(command?.conflictMessage ?? '断面升级失败，请检查当前路段与规则配置')
+    return
+  }
+
   roadStore.selectSegment(segment.id)
   syncRendererWithStore()
-  if (command.conflictMessage) editorStore.setError('升级断面时已清理无法迁移的车道规则')
-  else editorStore.clearError()
+  editorStore.clearError()
 }
 
 async function handleParallelRoad(event: MouseEvent): Promise<void> {

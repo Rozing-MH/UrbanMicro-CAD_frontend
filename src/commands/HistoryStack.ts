@@ -12,9 +12,8 @@ export class HistoryStack {
   }
 
   async execute(command: ICommand): Promise<void> {
-    // Discard redo history beyond current pointer
-    this.stack.splice(this.pointer + 1)
     await command.execute()
+    this.stack.splice(this.pointer + 1)
     this.stack.push(command)
     if (this.stack.length > MAX_HISTORY) {
       this.stack.shift()
@@ -32,8 +31,9 @@ export class HistoryStack {
 
   async redo(): Promise<void> {
     if (this.pointer >= this.stack.length - 1) return
-    this.pointer++
-    await this.stack[this.pointer].execute()
+    const nextPointer = this.pointer + 1
+    await this.stack[nextPointer].execute()
+    this.pointer = nextPointer
     this.notify()
   }
 

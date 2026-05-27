@@ -295,11 +295,18 @@ async function applyActiveProfile(): Promise<void> {
   if (!selectedSegment.value) return
   const segment = selectedSegment.value
   const profile = getProfileById(editor.activeProfileId)
-  const meshData = await buildSegmentGeometry(segment.centerLine, profile, segment.elevation.startZ)
-  const command = new UpgradeSegmentCommand(segment.id, profile, meshData)
-  await historyStack.execute(command)
-  if (command.conflictMessage) editor.setError('升级断面时已清理无法迁移的车道规则')
-  else editor.clearError()
+  let command: UpgradeSegmentCommand | null = null
+
+  try {
+    const meshData = await buildSegmentGeometry(segment.centerLine, profile, segment.elevation.startZ)
+    command = new UpgradeSegmentCommand(segment.id, profile, meshData)
+    await historyStack.execute(command)
+  } catch {
+    editor.setError(command?.conflictMessage ?? '断面升级失败，请检查当前路段与规则配置')
+    return
+  }
+
+  editor.clearError()
 }
 
 async function deleteSelected(): Promise<void> {

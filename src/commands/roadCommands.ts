@@ -207,7 +207,6 @@ export class UpgradeSegmentCommand implements ICommand {
   conflictMessage: string | null = null
   private oldSegment: RoadSegment | null = null
   private oldLanes: Lane[] = []
-  private removedRules: RuleSnapshot | null = null
 
   constructor(
     private segmentId: string,
@@ -218,7 +217,7 @@ export class UpgradeSegmentCommand implements ICommand {
   execute(): void {
     const store = useRoadNetworkStore()
     const segment = store.getSegment(this.segmentId)
-    if (!segment) return
+    if (!segment) throw new Error('无法升级断面：目标路段不存在')
 
     this.oldSegment = cloneSegment(segment)
     this.oldLanes = store.getLanesBySegment(this.segmentId).map((lane) => ({ ...lane }))
@@ -226,17 +225,19 @@ export class UpgradeSegmentCommand implements ICommand {
     const removedLaneIds = this.oldLanes
       .map((lane) => lane.id)
       .filter((laneId) => !nextLaneIds.has(laneId))
-    this.removedRules = captureRulesForLaneIds(new Set(removedLaneIds))
-    const removedRuleCount =
-      this.removedRules.laneRestrictions.length +
-      this.removedRules.laneConnectors.length +
-      this.removedRules.laneArrows.length
+    const conflictingRules = captureRulesForLaneIds(new Set(removedLaneIds))
+    const conflictRuleCount =
+      conflictingRules.laneRestrictions.length +
+      conflictingRules.laneConnectors.length +
+      conflictingRules.laneArrows.length
+
+    if (conflictRuleCount > 0) {
+      this.conflictMessage = `断面降级被阻止：目标断面会删除仍关联 ${conflictRuleCount} 项交规的车道，请先移除相关车道限制、连接器或箭头。`
+      throw new Error(this.conflictMessage)
+    }
 
     store.replaceSegmentProfile(this.segmentId, this.profile, this.meshData)
-    removeRuleSnapshot(this.removedRules)
-    this.conflictMessage = removedRuleCount > 0
-      ? `Road upgrade removed ${removedRuleCount} lane rule(s) that could not be migrated.`
-      : null
+    this.conflictMessage = null
   }
 
   undo(): void {
@@ -244,7 +245,6 @@ export class UpgradeSegmentCommand implements ICommand {
     const store = useRoadNetworkStore()
     store.replaceSegmentProfile(this.segmentId, this.oldSegment.profile, this.oldSegment.meshData)
     for (const lane of this.oldLanes) store.addLane({ ...lane })
-    if (this.removedRules) restoreRuleSnapshot(this.removedRules)
   }
 
   getDescription(): string {
