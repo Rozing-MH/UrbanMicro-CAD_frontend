@@ -26,8 +26,14 @@ import { useSimulationStore } from '@/stores/simulationStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { historyStack } from '@/commands/HistoryStack'
-import { AddSegmentCommand, DeleteSegmentCommand } from '@/commands/roadCommands'
-import { getGeometryWorker } from '@/workers'
+import {
+  AddSegmentCommand,
+  CreateParallelSegmentCommand,
+  DeleteSegmentCommand,
+  UpgradeSegmentCommand,
+} from '@/commands/roadCommands'
+import { buildSegmentGeometry, createSegmentFromPoints } from '@/utils/roadGeometry'
+import { getProfileById } from '@/utils/roadProfiles'
 import type { Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData } from '@/types'
 
 const DEFAULT_PROFILE: CrossSectionProfile = {
@@ -87,6 +93,9 @@ function genId(): string {
 const hint = computed(() => {
   switch (editorStore.activeTool) {
     case 'ROAD_DRAW': return '左键放置道路节点，Esc 结束'
+    case 'ROAD_UPGRADE': return '点击路段，使用左侧当前断面原位升级'
+    case 'PARALLEL_ROAD': return '点击路段，按当前断面宽度生成平行路'
+    case 'BULLDOZER': return '点击路段删除，支持撤销/重做'
     case 'ROAD_EDIT': return '左键选择节点拖动调整'
     case 'TRAFFIC_LIGHT': return '点击交叉口添加信号灯'
     case 'LANE_CONNECTOR': return '依次点击进入车道与目标车道'
@@ -160,11 +169,7 @@ function buildFallbackRoadMesh(centerLine: Point2D[], halfWidth: number, elevati
 }
 
 async function buildRoadMesh(centerLine: Point2D[], profile: CrossSectionProfile, elevation: number): Promise<MeshData> {
-  try {
-    return await getGeometryWorker().buildRoadMesh(centerLine, profile.totalWidth / 2, elevation)
-  } catch {
-    return buildFallbackRoadMesh(centerLine, profile.totalWidth / 2, elevation)
-  }
+  return buildSegmentGeometry(centerLine, profile, elevation)
 }
 
 function drawPreviewLine(a: Point2D, b: Point2D): void {
@@ -245,16 +250,14 @@ async function handleRoadDraw(point: Point2D): Promise<void> {
       roadStore.addNode(found.node)
       roadRenderer.addNode(found.node)
     }
-    const dx = point.x - startNode.position.x
-    const dy = point.y - startNode.position.y
-    const profile = KNOWN_PROFILES[editorStore.activeProfileId] ?? DEFAULT_PROFILE
+    const profile = getProfileById(editorStore.activeProfileId)
     const centerLine = [startNode.position, point]
     const elevation = {
       startZ: roadStore.drawingContext.startElevation,
       endZ: roadStore.drawingContext.endElevation,
       mode: roadStore.drawingContext.currentElevationMode,
     }
-    const segment: RoadSegment = {
+    const segment: RoadSegment = createSegmentFromPoints({
       id: genId(),
       startNodeId: ctx.startNodeId,
       endNodeId: found.id,
@@ -262,9 +265,8 @@ async function handleRoadDraw(point: Point2D): Promise<void> {
       profile,
       elevation,
       isCurved: false,
-      length: Math.sqrt(dx * dx + dy * dy),
       meshData: await buildRoadMesh(centerLine, profile, elevation.startZ),
-    }
+    })
     const cmd = new AddSegmentCommand(segment, startNode, found.node, false, found.created)
     await historyStack.execute(cmd)
     roadRenderer.addSegment(segment)
@@ -310,7 +312,47 @@ async function handleBulldozer(event: MouseEvent): Promise<void> {
   const picked = pickSceneObject(event)
   if (!picked?.segmentId) return
   await historyStack.execute(new DeleteSegmentCommand(picked.segmentId))
-  roadRenderer.removeSegment(picked.segmentId)
+  syncRendererWithStore()
+}
+
+async function handleRoadUpgrade(event: MouseEvent): Promise<void> {
+  const picked = pickSceneObject(event)
+  if (!picked?.segmentId) return
+  const segment = roadStore.getSegment(picked.segmentId)
+  if (!segment) return
+  const profile = getProfileById(editorStore.activeProfileId)
+  const meshData = await buildRoadMesh(segment.centerLine, profile, segment.elevation.startZ)
+  const command = new UpgradeSegmentCommand(segment.id, profile, meshData)
+  await historyStack.execute(command)
+  roadStore.selectSegment(segment.id)
+  syncRendererWithStore()
+  if (command.conflictMessage) editorStore.setError('升级断面时已清理无法迁移的车道规则')
+  else editorStore.clearError()
+}
+
+async function handleParallelRoad(event: MouseEvent): Promise<void> {
+  const picked = pickSceneObject(event)
+  if (!picked?.segmentId) return
+  const profile = getProfileById(editorStore.activeProfileId)
+  const draft = roadStore.createParallelSegmentDraft({
+    sourceSegmentId: picked.segmentId,
+    profile,
+    offsetDistance: profile.totalWidth + 2,
+    segmentId: genId(),
+    startNodeId: genId(),
+    endNodeId: genId(),
+  })
+  if (!draft) return
+  draft.segment.meshData = await buildRoadMesh(draft.segment.centerLine, profile, draft.segment.elevation.startZ)
+  await historyStack.execute(new CreateParallelSegmentCommand(
+    draft.segment,
+    draft.startNode,
+    draft.endNode,
+    true,
+    true,
+  ))
+  roadStore.selectSegment(draft.segment.id)
+  syncRendererWithStore()
 }
 
 function handleTrafficLight(event: MouseEvent): void {
@@ -347,8 +389,21 @@ async function onPointerDown(event: MouseEvent): Promise<void> {
   const snapped = snapPoint(world)
   if (editorStore.activeTool === 'ROAD_DRAW') await handleRoadDraw(snapped)
   else if (editorStore.activeTool === 'SELECT') handleSelect(event)
+  else if (editorStore.activeTool === 'ROAD_UPGRADE') await handleRoadUpgrade(event)
+  else if (editorStore.activeTool === 'PARALLEL_ROAD') await handleParallelRoad(event)
   else if (editorStore.activeTool === 'BULLDOZER') await handleBulldozer(event)
   else if (editorStore.activeTool === 'TRAFFIC_LIGHT') handleTrafficLight(event)
+}
+
+function syncRendererWithStore(): void {
+  for (const id of Array.from(roadRenderer.segmentMeshes.keys())) {
+    if (!roadStore.segments.has(id)) roadRenderer.removeSegment(id)
+  }
+  for (const id of Array.from(roadRenderer.nodeMarkers.keys())) {
+    if (!roadStore.nodes.has(id)) roadRenderer.removeNode(id)
+  }
+  for (const seg of roadStore.segments.values()) roadRenderer.addSegment(seg)
+  for (const node of roadStore.nodes.values()) roadRenderer.addNode(node)
 }
 
 function onContextMenu(event: MouseEvent): void {
@@ -394,6 +449,11 @@ watch(
   },
 )
 
+watch(
+  () => roadStore.topologyVersion,
+  () => syncRendererWithStore(),
+)
+
 onMounted(() => {
   // renderer.state.value is already set by the composable's own onMounted
   vehicleRenderer.init()
@@ -403,8 +463,7 @@ onMounted(() => {
   containerRef.value?.addEventListener('pointerdown', onPointerDown)
   containerRef.value?.addEventListener('contextmenu', onContextMenu)
   window.addEventListener('keydown', onKeyDown)
-  for (const seg of roadStore.segments.values()) roadRenderer.addSegment(seg)
-  for (const node of roadStore.nodes.values()) roadRenderer.addNode(node)
+  syncRendererWithStore()
   renderer.startRenderLoop(() => {
     if (
       ['SIMULATION', 'TRAFFIC_VOLUME', 'TRAFFIC_ROUTES'].includes(editorStore.viewMode) &&

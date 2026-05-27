@@ -103,6 +103,7 @@
         </div>
 
         <div class="prop-actions">
+          <button class="primary-btn" @click="applyActiveProfile">应用当前断面</button>
           <button class="danger-btn" @click="deleteSelected">删除该路段</button>
         </div>
       </section>
@@ -168,6 +169,10 @@ import { computed } from 'vue'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
+import { historyStack } from '@/commands/HistoryStack'
+import { DeleteSegmentCommand, UpgradeSegmentCommand } from '@/commands/roadCommands'
+import { buildSegmentGeometry } from '@/utils/roadGeometry'
+import { getProfileById } from '@/utils/roadProfiles'
 import type { ElevationMode, Lane, LaneDirection, RoadSegment } from '@/types/road-network'
 import type { LaneRestriction, MarkingType } from '@/types/traffic-rule'
 
@@ -286,10 +291,21 @@ function onElevationEndChange(ev: Event): void {
   })
 }
 
-function deleteSelected(): void {
+async function applyActiveProfile(): Promise<void> {
+  if (!selectedSegment.value) return
+  const segment = selectedSegment.value
+  const profile = getProfileById(editor.activeProfileId)
+  const meshData = await buildSegmentGeometry(segment.centerLine, profile, segment.elevation.startZ)
+  const command = new UpgradeSegmentCommand(segment.id, profile, meshData)
+  await historyStack.execute(command)
+  if (command.conflictMessage) editor.setError('升级断面时已清理无法迁移的车道规则')
+  else editor.clearError()
+}
+
+async function deleteSelected(): Promise<void> {
   if (!selectedSegment.value) return
   if (!confirm('确认删除选中的路段？')) return
-  road.removeSegment(selectedSegment.value.id)
+  await historyStack.execute(new DeleteSegmentCommand(selectedSegment.value.id))
 }
 
 function onNodeElevationChange(ev: Event): void {
@@ -368,12 +384,16 @@ function onLightStrategyChange(ev: Event): void {
   color: #d8dde6; border-radius: 3px; font-size: 11px;
 }
 .mini-check { display: flex; align-items: center; gap: 3px; color: #aab2bf; }
-.prop-actions { margin-top: 16px; }
+.prop-actions { margin-top: 16px; display: grid; gap: 8px; }
+.primary-btn,
 .danger-btn {
   width: 100%; padding: 6px;
-  background: #a13c3c; color: #fff; border: none; border-radius: 4px;
+  color: #fff; border: none; border-radius: 4px;
   cursor: pointer; font-size: 12px;
 }
+.primary-btn { background: #2c5d99; }
+.primary-btn:hover { background: #3670b8; }
+.danger-btn { background: #a13c3c; }
 .danger-btn:hover { background: #b94a4a; }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; color: #aab2bf; }
 </style>

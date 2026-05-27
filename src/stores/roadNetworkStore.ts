@@ -11,7 +11,10 @@ import type {
   ElevationMode,
   TopologyData,
   Point2D,
+  CrossSectionProfile,
+  MeshData,
 } from '@/types/road-network'
+import { createSegmentFromPoints, offsetPolyline } from '@/utils/roadGeometry'
 
 export const useRoadNetworkStore = defineStore('roadNetwork', () => {
   const nodes = ref<Map<string, RoadNode>>(new Map())
@@ -173,7 +176,104 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     for (const lane of lanes.value.values()) {
       if (lane.segmentId === segmentId) result.push(lane)
     }
-    return result
+    return result.sort((a, b) => a.index - b.index)
+  }
+
+  function getSegmentLaneIds(segmentId: string): string[] {
+    return getLanesBySegment(segmentId).map((lane) => lane.id)
+  }
+
+  function rebuildSegmentLanes(segmentId: string): { oldLaneIds: string[]; newLaneIds: string[]; removedLaneIds: string[] } {
+    const seg = segments.value.get(segmentId)
+    if (!seg) return { oldLaneIds: [], newLaneIds: [], removedLaneIds: [] }
+    const oldLaneIds = getSegmentLaneIds(segmentId)
+    const nextLanes = createLanesForSegment(seg)
+    const nextLaneIds = new Set(nextLanes.map((lane) => lane.id))
+
+    for (const lane of Array.from(lanes.value.values())) {
+      if (lane.segmentId === segmentId && !nextLaneIds.has(lane.id)) {
+        lanes.value.delete(lane.id)
+        for (const arrow of Array.from(laneArrows.value.values())) {
+          if (arrow.laneId === lane.id) laneArrows.value.delete(laneArrowKey(arrow))
+        }
+      }
+    }
+    for (const lane of nextLanes) lanes.value.set(lane.id, lane)
+
+    return {
+      oldLaneIds,
+      newLaneIds: nextLanes.map((lane) => lane.id),
+      removedLaneIds: oldLaneIds.filter((laneId) => !nextLaneIds.has(laneId)),
+    }
+  }
+
+  function rebuildSegmentMeshData(segmentId: string, meshData: MeshData | undefined): void {
+    const existing = segments.value.get(segmentId)
+    if (!existing) return
+    segments.value.set(segmentId, { ...existing, meshData })
+    topologyVersion.value++
+  }
+
+  function replaceSegmentProfile(
+    segmentId: string,
+    profile: CrossSectionProfile,
+    meshData?: MeshData,
+  ): { oldLaneIds: string[]; newLaneIds: string[]; removedLaneIds: string[] } {
+    const existing = segments.value.get(segmentId)
+    if (!existing) return { oldLaneIds: [], newLaneIds: [], removedLaneIds: [] }
+    segments.value.set(segmentId, { ...existing, profile, meshData })
+    const laneResult = rebuildSegmentLanes(segmentId)
+    for (const he of Array.from(halfEdges.value.values())) {
+      if (he.segmentId === segmentId) halfEdges.value.delete(he.id)
+    }
+    ensureSegmentHalfEdges(segments.value.get(segmentId)!)
+    topologyVersion.value++
+    return laneResult
+  }
+
+  function createParallelSegmentDraft(params: {
+    sourceSegmentId: string
+    profile: CrossSectionProfile
+    offsetDistance: number
+    segmentId: string
+    startNodeId: string
+    endNodeId: string
+    meshData?: MeshData
+  }): { startNode: RoadNode; endNode: RoadNode; segment: RoadSegment } | null {
+    const source = segments.value.get(params.sourceSegmentId)
+    if (!source) return null
+    const shiftedLine = offsetPolyline(source.centerLine, params.offsetDistance)
+    const sourceStart = nodes.value.get(source.startNodeId)
+    const sourceEnd = nodes.value.get(source.endNodeId)
+    const startPoint = shiftedLine[0]
+    const endPoint = shiftedLine[shiftedLine.length - 1]
+    const startNode: RoadNode = {
+      id: params.startNodeId,
+      position: startPoint,
+      elevation: sourceStart?.elevation ?? source.elevation.startZ,
+      controlMode: 'NONE',
+      connectedSegmentIds: [],
+      polygonVertices: [],
+    }
+    const endNode: RoadNode = {
+      id: params.endNodeId,
+      position: endPoint,
+      elevation: sourceEnd?.elevation ?? source.elevation.endZ,
+      controlMode: 'NONE',
+      connectedSegmentIds: [],
+      polygonVertices: [],
+    }
+    const segment = createSegmentFromPoints({
+      id: params.segmentId,
+      startNodeId: startNode.id,
+      endNodeId: endNode.id,
+      centerLine: shiftedLine,
+      profile: params.profile,
+      elevation: { ...source.elevation },
+      isCurved: source.isCurved,
+      meshData: params.meshData,
+    })
+    return { startNode, endNode, segment }
   }
 
   function setLaneArrow(arrow: LaneArrow): void {
@@ -296,7 +396,9 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     nodeCount, segmentCount, isDrawing,
     addNode, updateNode, removeNode, getNode,
     addSegment, updateSegment, removeSegment, getSegment,
-    addLane, removeLane, getLanesBySegment, setLaneArrow, removeLaneArrow,
+    addLane, removeLane, getLanesBySegment, getSegmentLaneIds,
+    rebuildSegmentLanes, rebuildSegmentMeshData, replaceSegmentProfile, createParallelSegmentDraft,
+    setLaneArrow, removeLaneArrow,
     startDrawing, updatePreview, confirmDrawing, cancelDrawing,
     setDrawingMode, setElevationMode, setActiveCrossSection,
     selectNode, selectSegment, clearSelection, setHoveredSegment,

@@ -107,6 +107,7 @@ import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { templateApi } from '@/api/templateApi'
+import { registerCrossSectionProfiles } from '@/utils/roadProfiles'
 import type { CrossSectionProfile, LaneDef } from '@/types/road-network'
 import type { IDMParams, MOBILParams, ODPair } from '@/types/simulation'
 
@@ -244,6 +245,7 @@ onMounted(async () => {
     profiles.value = []
   } finally {
     if (profiles.value.length === 0) profiles.value = defaultProfiles
+    registerCrossSectionProfiles(profiles.value)
     loading.value = false
   }
   loadingAssets.value = true
