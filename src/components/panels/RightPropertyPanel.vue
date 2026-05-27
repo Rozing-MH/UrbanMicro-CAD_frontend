@@ -74,6 +74,34 @@
           </li>
         </ul>
 
+        <h4 class="sub-title">车道规则</h4>
+        <div v-for="lane in selectedSegmentLanes" :key="lane.id" class="rule-row">
+          <span class="mono">{{ lane.index + 1 }}</span>
+          <input
+            type="number"
+            min="5"
+            max="120"
+            step="5"
+            :value="laneRestriction(lane.id).speedLimit"
+            @change="onLaneSpeedChange(lane.id, $event)"
+          />
+          <select :value="laneRestriction(lane.id).markingType" @change="onLaneMarkingChange(lane.id, $event)">
+            <option value="DASHED_WHITE">白虚线</option>
+            <option value="SOLID_WHITE">白实线</option>
+            <option value="DASHED_YELLOW">黄虚线</option>
+            <option value="DOUBLE_SOLID_YELLOW">双黄线</option>
+            <option value="NONE">无</option>
+          </select>
+          <label class="mini-check">
+            <input
+              type="checkbox"
+              :checked="laneRestriction(lane.id).isBusOnly"
+              @change="onLaneBusOnlyChange(lane.id, $event)"
+            />
+            公交
+          </label>
+        </div>
+
         <div class="prop-actions">
           <button class="danger-btn" @click="deleteSelected">删除该路段</button>
         </div>
@@ -140,7 +168,8 @@ import { computed } from 'vue'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
-import type { ElevationMode, LaneDirection, RoadSegment } from '@/types/road-network'
+import type { ElevationMode, Lane, LaneDirection, RoadSegment } from '@/types/road-network'
+import type { LaneRestriction, MarkingType } from '@/types/traffic-rule'
 
 const editor = useEditorStateStore()
 const road = useRoadNetworkStore()
@@ -170,6 +199,11 @@ const selectedLight = computed(() => {
   return rules.trafficLights.get(rules.selectedLightId) ?? null
 })
 
+const selectedSegmentLanes = computed<Lane[]>(() => {
+  if (!selectedSegment.value) return []
+  return road.getLanesBySegment(selectedSegment.value.id)
+})
+
 function toggleCollapse(): void {
   editor.setPanelState({ rightPanelOpen: !editor.panelState.rightPanelOpen })
 }
@@ -185,6 +219,47 @@ function updateSegment(patch: Partial<RoadSegment>): void {
 
 function onSegmentCurvedChange(ev: Event): void {
   updateSegment({ isCurved: (ev.target as HTMLInputElement).checked })
+}
+
+function defaultRestriction(laneId: string): LaneRestriction {
+  return {
+    laneId,
+    speedLimit: 50,
+    allowedVehicleTypes: ['CAR', 'BUS', 'TRUCK', 'BIKE', 'TRAM'],
+    allowLeftChange: true,
+    allowRightChange: true,
+    markingType: 'DASHED_WHITE',
+    isBusOnly: false,
+  }
+}
+
+function laneRestriction(laneId: string): LaneRestriction {
+  return rules.laneRestrictions.get(laneId) ?? defaultRestriction(laneId)
+}
+
+function setLaneRestriction(laneId: string, patch: Partial<LaneRestriction>): void {
+  rules.setLaneRestriction({ ...laneRestriction(laneId), ...patch, laneId })
+}
+
+function onLaneSpeedChange(laneId: string, ev: Event): void {
+  setLaneRestriction(laneId, { speedLimit: Number((ev.target as HTMLInputElement).value) })
+}
+
+function onLaneMarkingChange(laneId: string, ev: Event): void {
+  const markingType = (ev.target as HTMLSelectElement).value as MarkingType
+  setLaneRestriction(laneId, {
+    markingType,
+    allowLeftChange: !markingType.includes('SOLID'),
+    allowRightChange: !markingType.includes('SOLID'),
+  })
+}
+
+function onLaneBusOnlyChange(laneId: string, ev: Event): void {
+  const isBusOnly = (ev.target as HTMLInputElement).checked
+  setLaneRestriction(laneId, {
+    isBusOnly,
+    allowedVehicleTypes: isBusOnly ? ['BUS'] : ['CAR', 'BUS', 'TRUCK', 'BIKE', 'TRAM'],
+  })
 }
 
 function onElevationModeChange(ev: Event): void {
@@ -278,6 +353,21 @@ function onLightStrategyChange(ev: Event): void {
 .lane-type { color: #d8dde6; }
 .lane-dir { text-align: center; }
 .lane-w { text-align: right; color: #aab2bf; }
+.rule-row {
+  display: grid;
+  grid-template-columns: 24px 58px 1fr 54px;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 5px;
+  font-size: 11px;
+}
+.rule-row input[type='number'], .rule-row select {
+  min-width: 0;
+  padding: 3px 5px;
+  background: #14171c; border: 1px solid #2a2f3a;
+  color: #d8dde6; border-radius: 3px; font-size: 11px;
+}
+.mini-check { display: flex; align-items: center; gap: 3px; color: #aab2bf; }
 .prop-actions { margin-top: 16px; }
 .danger-btn {
   width: 100%; padding: 6px;

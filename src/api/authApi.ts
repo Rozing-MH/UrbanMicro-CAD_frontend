@@ -1,4 +1,4 @@
-import apiClient, { setToken, clearToken, type ApiResponse } from './client'
+import apiClient, { getApiError, isApiSuccess, setToken, clearToken, type ApiResponse } from './client'
 
 export interface LoginRequest {
   username: string
@@ -21,8 +21,8 @@ export interface RegisterRequest {
 export const authApi = {
   async login(req: LoginRequest): Promise<LoginResponse> {
     const res = await apiClient.post<ApiResponse<LoginResponse>>('/auth/login', req)
-    if (!res.data.success || !res.data.data) {
-      throw new Error(res.data.error || 'Login failed')
+    if (!isApiSuccess(res.data) || !res.data.data) {
+      throw new Error(getApiError(res.data, 'Login failed'))
     }
     setToken(res.data.data.token)
     return res.data.data
@@ -30,8 +30,8 @@ export const authApi = {
 
   async register(req: RegisterRequest): Promise<void> {
     const res = await apiClient.post<ApiResponse<void>>('/auth/register', req)
-    if (!res.data.success) {
-      throw new Error(res.data.error || 'Registration failed')
+    if (!isApiSuccess(res.data)) {
+      throw new Error(getApiError(res.data, 'Registration failed'))
     }
   },
 

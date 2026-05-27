@@ -111,6 +111,12 @@ export interface SimulationStats {
   throughput: number
 }
 
+export interface SimulationFrame {
+  time: number
+  vehicleCount: number
+  stats: SimulationStats
+}
+
 export type SimulationStatus = 'STOPPED' | 'RUNNING' | 'PAUSED'
 
 export interface SimulationConfig {
@@ -133,4 +139,12 @@ export interface SimulationState {
 }
 
 export const VEHICLE_BUFFER_STRIDE = 16
+export const VEHICLE_BUFFER_OFFSETS = {
+  progress: 0,
+  speed: 1,
+  lateralOffset: 2,
+  laneChangeActive: 3,
+  laneIndex: 4,
+  typeIndex: 5,
+} as const
 export const MAX_VEHICLES = 1000

@@ -1,4 +1,4 @@
-import apiClient, { type ApiResponse } from './client'
+import apiClient, { getApiError, isApiSuccess, type ApiResponse, type PageResponse } from './client'
 import type { ProjectDTO, ProjectMeta, ProjectSnapshot } from '@/stores/projectStore'
 
 function dtoToProjectMeta(dto: ProjectDTO): ProjectMeta {
@@ -24,8 +24,13 @@ function dtoToSnapshot(dto: ProjectDTO): ProjectSnapshot {
 
 export const projectApi = {
   async list(): Promise<ProjectMeta[]> {
-    const res = await apiClient.get<ApiResponse<ProjectMeta[]>>('/projects')
-    return res.data.data ?? []
+    const res = await apiClient.get<ApiResponse<ProjectDTO[] | PageResponse<ProjectDTO>>>('/projects')
+    const data = res.data.data
+    if (!data) return []
+    const items = Array.isArray(data)
+      ? data
+      : data.records ?? data.content ?? data.items ?? []
+    return items.map(dtoToProjectMeta)
   },
 
   async get(id: string): Promise<ProjectSnapshot> {
@@ -35,19 +40,22 @@ export const projectApi = {
   },
 
   async create(meta: Partial<ProjectMeta>): Promise<ProjectMeta> {
-    const res = await apiClient.post<ApiResponse<ProjectMeta>>('/projects', meta)
+    const res = await apiClient.post<ApiResponse<ProjectDTO>>('/projects', {
+      name: meta.name,
+      description: meta.description ?? '',
+    })
     if (!res.data.data) throw new Error('Create failed')
-    return res.data.data
+    return dtoToProjectMeta(res.data.data)
   },
 
   async save(id: string, snapshot: ProjectSnapshot): Promise<void> {
-    const res = await apiClient.put<ApiResponse<void>>(`/projects/${id}/snapshot`, {
+    const res = await apiClient.put<ApiResponse<unknown>>(`/projects/${id}/snapshot`, {
       topologyData: snapshot.topology,
       ruleData: snapshot.rules,
       description: snapshot.meta.description,
     })
-    if (!res.data.success) {
-      throw new Error(res.data.error || 'Save failed')
+    if (!isApiSuccess(res.data)) {
+      throw new Error(getApiError(res.data, 'Save failed'))
     }
   },
 

@@ -33,14 +33,42 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
     return geo
   }
 
+  function fallbackSegmentGeometry(seg: RoadSegment): THREE.BufferGeometry {
+    const start = seg.centerLine[0]
+    const end = seg.centerLine[seg.centerLine.length - 1]
+    const halfWidth = seg.profile.totalWidth / 2
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    const len = Math.hypot(dx, dy) || 1
+    const nx = -dy / len
+    const ny = dx / len
+    const z = seg.elevation.startZ
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.Float32BufferAttribute([
+      start.x + nx * halfWidth, z, start.y + ny * halfWidth,
+      start.x - nx * halfWidth, z, start.y - ny * halfWidth,
+      end.x + nx * halfWidth, z, end.y + ny * halfWidth,
+      end.x - nx * halfWidth, z, end.y - ny * halfWidth,
+    ], 3))
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute([
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+    ], 3))
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 1, 1], 2))
+    geo.setIndex([0, 1, 2, 2, 1, 3])
+    return geo
+  }
+
   function addSegment(seg: RoadSegment): void {
-    if (!scene.value || !seg.meshData) return
+    if (!scene.value) return
     const existing = segmentMeshes.get(seg.id)
     if (existing) {
       scene.value.remove(existing)
       existing.geometry.dispose()
     }
-    const geo = meshDataToGeometry(seg.meshData)
+    const geo = seg.meshData ? meshDataToGeometry(seg.meshData) : fallbackSegmentGeometry(seg)
     const mesh = new THREE.Mesh(geo, roadMaterial)
     mesh.receiveShadow = true
     mesh.userData.segmentId = seg.id
@@ -61,7 +89,10 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
   function addNode(node: RoadNode): void {
     if (!scene.value) return
     const existing = nodeMarkers.get(node.id)
-    if (existing) scene.value.remove(existing)
+    if (existing) {
+      scene.value.remove(existing)
+      existing.geometry.dispose()
+    }
 
     const geo = new THREE.SphereGeometry(1.2, 16, 12)
     const mesh = new THREE.Mesh(geo, nodeMaterial)

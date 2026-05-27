@@ -24,9 +24,11 @@ import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
+import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { historyStack } from '@/commands/HistoryStack'
-import { AddSegmentCommand } from '@/commands/roadCommands'
-import type { Point2D, RoadSegment, RoadNode, CrossSectionProfile } from '@/types'
+import { AddSegmentCommand, DeleteSegmentCommand } from '@/commands/roadCommands'
+import { getGeometryWorker } from '@/workers'
+import type { Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData } from '@/types'
 
 const DEFAULT_PROFILE: CrossSectionProfile = {
   id: 'default-2lane',
@@ -40,11 +42,29 @@ const DEFAULT_PROFILE: CrossSectionProfile = {
   totalWidth: 8,
 }
 
+const KNOWN_PROFILES: Record<string, CrossSectionProfile> = {
+  [DEFAULT_PROFILE.id]: DEFAULT_PROFILE,
+  'arterial-4lane-bus': {
+    id: 'arterial-4lane-bus',
+    name: '四车道公交干道',
+    lanes: [
+      { id: 'l1', width: 3.5, type: 'BUS', direction: 'FORWARD' },
+      { id: 'l2', width: 3.5, type: 'CAR', direction: 'FORWARD' },
+      { id: 'l3', width: 3.5, type: 'CAR', direction: 'BACKWARD' },
+      { id: 'l4', width: 3.5, type: 'BUS', direction: 'BACKWARD' },
+    ],
+    median: { width: 1.5, type: 'GRASS' },
+    sidewalk: { leftWidth: 2, rightWidth: 2 },
+    totalWidth: 19.5,
+  },
+}
+
 const containerRef = ref<HTMLDivElement | null>(null)
 const roadStore = useRoadNetworkStore()
 const editorStore = useEditorStateStore()
 const simStore = useSimulationStore()
 const evaluationStore = useEvaluationStore()
+const trafficRuleStore = useTrafficRuleStore()
 
 // Pass containerRef at construction — renderer auto-inits via its own onMounted
 const renderer = useThreeRenderer(containerRef)
@@ -110,6 +130,42 @@ function snapPoint(p: Point2D): Point2D {
 }
 
 let previewMesh: THREE.Line | null = null
+let simTickInFlight = false
+
+function buildFallbackRoadMesh(centerLine: Point2D[], halfWidth: number, elevation: number): MeshData {
+  const start = centerLine[0]
+  const end = centerLine[centerLine.length - 1]
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const len = Math.hypot(dx, dy) || 1
+  const nx = -dy / len
+  const ny = dx / len
+  const vertices = new Float32Array([
+    start.x + nx * halfWidth, elevation, start.y + ny * halfWidth,
+    start.x - nx * halfWidth, elevation, start.y - ny * halfWidth,
+    end.x + nx * halfWidth, elevation, end.y + ny * halfWidth,
+    end.x - nx * halfWidth, elevation, end.y - ny * halfWidth,
+  ])
+  return {
+    vertices,
+    indices: new Uint32Array([0, 1, 2, 2, 1, 3]),
+    uvs: new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]),
+    normals: new Float32Array([
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+    ]),
+  }
+}
+
+async function buildRoadMesh(centerLine: Point2D[], profile: CrossSectionProfile, elevation: number): Promise<MeshData> {
+  try {
+    return await getGeometryWorker().buildRoadMesh(centerLine, profile.totalWidth / 2, elevation)
+  } catch {
+    return buildFallbackRoadMesh(centerLine, profile.totalWidth / 2, elevation)
+  }
+}
 
 function drawPreviewLine(a: Point2D, b: Point2D): void {
   const scene = sceneRef.value
@@ -191,39 +247,97 @@ async function handleRoadDraw(point: Point2D): Promise<void> {
     }
     const dx = point.x - startNode.position.x
     const dy = point.y - startNode.position.y
+    const profile = KNOWN_PROFILES[editorStore.activeProfileId] ?? DEFAULT_PROFILE
+    const centerLine = [startNode.position, point]
+    const elevation = {
+      startZ: roadStore.drawingContext.startElevation,
+      endZ: roadStore.drawingContext.endElevation,
+      mode: roadStore.drawingContext.currentElevationMode,
+    }
     const segment: RoadSegment = {
       id: genId(),
       startNodeId: ctx.startNodeId,
       endNodeId: found.id,
-      centerLine: [startNode.position, point],
-      profile: DEFAULT_PROFILE,
-      elevation: { startZ: 0, endZ: 0, mode: 'GROUND' },
+      centerLine,
+      profile,
+      elevation,
       isCurved: false,
       length: Math.sqrt(dx * dx + dy * dy),
+      meshData: await buildRoadMesh(centerLine, profile, elevation.startZ),
     }
     const cmd = new AddSegmentCommand(segment, startNode, found.node, false, found.created)
     await historyStack.execute(cmd)
     roadRenderer.addSegment(segment)
     clearPreview()
-    roadStore.startDrawing(ctx.mode, point, found.id)
+    if (editorStore.continuousDrawing) {
+      roadStore.startDrawing(ctx.mode, point, found.id)
+    } else {
+      roadStore.cancelDrawing()
+    }
   }
 }
 
-function handleSelect(event: MouseEvent): void {
+function pickSceneObject(event: MouseEvent): { segmentId?: string; nodeId?: string } | null {
   const camera = cameraRef.value
-  if (!camera || !containerRef.value) return
+  if (!camera || !containerRef.value) return null
   const rect = containerRef.value.getBoundingClientRect()
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
   raycaster.setFromCamera(pointer, camera)
-  const meshes = Array.from(roadRenderer.segmentMeshes.values())
+  const meshes = [
+    ...Array.from(roadRenderer.segmentMeshes.values()),
+    ...Array.from(roadRenderer.nodeMarkers.values()),
+  ]
   const intersects = raycaster.intersectObjects(meshes, false)
   if (intersects.length > 0) {
-    const id = intersects[0].object.userData.segmentId as string | undefined
-    if (id) roadStore.selectSegment(id)
-  } else {
-    roadStore.clearSelection()
+    const object = intersects[0].object
+    return {
+      segmentId: object.userData.segmentId as string | undefined,
+      nodeId: object.userData.nodeId as string | undefined,
+    }
   }
+  return null
+}
+
+function handleSelect(event: MouseEvent): void {
+  const picked = pickSceneObject(event)
+  if (picked?.segmentId) roadStore.selectSegment(picked.segmentId)
+  else if (picked?.nodeId) roadStore.selectNode(picked.nodeId)
+  else roadStore.clearSelection()
+}
+
+async function handleBulldozer(event: MouseEvent): Promise<void> {
+  const picked = pickSceneObject(event)
+  if (!picked?.segmentId) return
+  await historyStack.execute(new DeleteSegmentCommand(picked.segmentId))
+  roadRenderer.removeSegment(picked.segmentId)
+}
+
+function handleTrafficLight(event: MouseEvent): void {
+  const picked = pickSceneObject(event)
+  if (!picked?.nodeId) return
+  const id = `tl_${picked.nodeId}`
+  trafficRuleStore.addTrafficLight({
+    id,
+    nodeId: picked.nodeId,
+    strategy: 'FIXED',
+    steps: [
+      {
+        id: `${id}:step:0`,
+        greenLanes: [],
+        minGreenTime: 30,
+        maxGreenTime: 60,
+        yellowTime: 3,
+        allRedTime: 2,
+        sensorBindings: [],
+      },
+    ],
+    sensors: [],
+    currentStepIndex: 0,
+    timeInCurrentStep: 0,
+  })
+  trafficRuleStore.selectLight(id)
+  roadStore.updateNode(picked.nodeId, { controlMode: 'TRAFFIC_LIGHT' })
 }
 
 async function onPointerDown(event: MouseEvent): Promise<void> {
@@ -233,6 +347,14 @@ async function onPointerDown(event: MouseEvent): Promise<void> {
   const snapped = snapPoint(world)
   if (editorStore.activeTool === 'ROAD_DRAW') await handleRoadDraw(snapped)
   else if (editorStore.activeTool === 'SELECT') handleSelect(event)
+  else if (editorStore.activeTool === 'BULLDOZER') await handleBulldozer(event)
+  else if (editorStore.activeTool === 'TRAFFIC_LIGHT') handleTrafficLight(event)
+}
+
+function onContextMenu(event: MouseEvent): void {
+  event.preventDefault()
+  roadStore.cancelDrawing()
+  clearPreview()
 }
 
 function onKeyDown(event: KeyboardEvent): void {
@@ -279,11 +401,21 @@ onMounted(() => {
   cameraControls.attach()
   containerRef.value?.addEventListener('pointermove', onPointerMove)
   containerRef.value?.addEventListener('pointerdown', onPointerDown)
+  containerRef.value?.addEventListener('contextmenu', onContextMenu)
   window.addEventListener('keydown', onKeyDown)
   for (const seg of roadStore.segments.values()) roadRenderer.addSegment(seg)
   for (const node of roadStore.nodes.values()) roadRenderer.addNode(node)
   renderer.startRenderLoop(() => {
-    if (editorStore.viewMode === 'SIMULATION' && simStore.state === 'RUNNING') {
+    if (
+      ['SIMULATION', 'TRAFFIC_VOLUME', 'TRAFFIC_ROUTES'].includes(editorStore.viewMode) &&
+      simStore.state === 'RUNNING'
+    ) {
+      if (!simTickInFlight) {
+        simTickInFlight = true
+        void simStore.tick().finally(() => {
+          simTickInFlight = false
+        })
+      }
       const buf = simStore.getVehicleView()
       if (buf) {
         const lanePositions = new Map<string, THREE.Vector3[]>()
@@ -306,6 +438,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   containerRef.value?.removeEventListener('pointermove', onPointerMove)
   containerRef.value?.removeEventListener('pointerdown', onPointerDown)
+  containerRef.value?.removeEventListener('contextmenu', onContextMenu)
   window.removeEventListener('keydown', onKeyDown)
   cameraControls.detach()
   renderer.dispose()

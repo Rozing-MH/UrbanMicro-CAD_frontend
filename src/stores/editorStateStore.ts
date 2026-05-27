@@ -4,14 +4,19 @@ import { ref, computed } from 'vue'
 export type ToolMode =
   | 'SELECT'
   | 'ROAD_DRAW'
+  | 'ROAD_UPGRADE'
+  | 'BULLDOZER'
+  | 'PARALLEL_ROAD'
   | 'ROAD_EDIT'
   | 'TRAFFIC_LIGHT'
   | 'LANE_CONNECTOR'
+  | 'LANE_RESTRICTION'
+  | 'LANE_ARROW'
   | 'OD_MARKER'
   | 'MEASURE'
   | 'PAN'
 
-export type ViewMode = 'EDIT' | 'SIMULATION' | 'EVALUATION'
+export type ViewMode = 'EDIT' | 'SIMULATION' | 'EVALUATION' | 'TRAFFIC_VOLUME' | 'TRAFFIC_ROUTES'
 
 export type PanelState = {
   leftPanelOpen: boolean
@@ -43,6 +48,8 @@ export const useEditorStateStore = defineStore('editorState', () => {
   const showGrid = ref(true)
   const showMeasurements = ref(false)
   const showNodeIds = ref(false)
+  const continuousDrawing = ref(true)
+  const activeProfileId = ref('default-2lane')
   const renderLOD = ref<'HIGH' | 'MEDIUM' | 'LOW'>('HIGH')
 
   const historyPointer = ref(-1)
@@ -92,6 +99,14 @@ export const useEditorStateStore = defineStore('editorState', () => {
     gridSize.value = Math.max(0.1, size)
   }
 
+  function setActiveProfile(id: string): void {
+    activeProfileId.value = id
+  }
+
+  function toggleContinuousDrawing(): void {
+    continuousDrawing.value = !continuousDrawing.value
+  }
+
   function toggleGrid(): void {
     showGrid.value = !showGrid.value
   }
@@ -104,10 +119,12 @@ export const useEditorStateStore = defineStore('editorState', () => {
   return {
     activeTool, viewMode, cameraPosition, cameraTarget, zoomLevel,
     panelState, isLoading, loadingMessage, errorMessage,
-    snapToGrid, snapToRoad, gridSize, showGrid, showMeasurements, showNodeIds, renderLOD,
+    snapToGrid, snapToRoad, gridSize, showGrid, showMeasurements, showNodeIds,
+    continuousDrawing, activeProfileId, renderLOD,
     historyPointer, historyLength, canUndo, canRedo,
     setActiveTool, setViewMode, updateCamera, setZoom, setPanelState,
-    setLoading, setError, clearError, toggleSnap, setGridSize, toggleGrid,
+    setLoading, setError, clearError, toggleSnap, setGridSize, setActiveProfile,
+    toggleContinuousDrawing, toggleGrid,
     updateHistoryState,
   }
 })

@@ -1,9 +1,9 @@
 import { expose } from 'comlink'
-import type { SimVehicle, IDMParams, MOBILParams, SimulationStats } from '@/types/simulation'
-import type { TopologyData } from '@/types/road-network'
+import type { SimVehicle, IDMParams, MOBILParams, SimulationStats, VehicleMixConfig, VehicleType } from '@/types/simulation'
+import type { Lane, TopologyData } from '@/types/road-network'
 import type { RuleData } from '@/types/traffic-rule'
 import type { ODMatrix } from '@/types/simulation'
-import { VEHICLE_BUFFER_STRIDE, MAX_VEHICLES } from '@/types/simulation'
+import { DEFAULT_VEHICLE_MIX, VEHICLE_BUFFER_OFFSETS, VEHICLE_BUFFER_STRIDE, MAX_VEHICLES } from '@/types/simulation'
 
 interface SimContext {
   topology: TopologyData | null
@@ -11,8 +11,11 @@ interface SimContext {
   odMatrix: ODMatrix | null
   idmParams: IDMParams | null
   mobilParams: MOBILParams | null
+  vehicleMix: VehicleMixConfig
   vehicleBuffer: Float32Array | null
   vehicles: Map<string, SimVehicle>
+  laneIds: string[]
+  completedVehicles: number
   time: number
   running: boolean
   onStats?: (stats: SimulationStats) => void
@@ -24,11 +27,16 @@ const ctx: SimContext = {
   odMatrix: null,
   idmParams: null,
   mobilParams: null,
+  vehicleMix: DEFAULT_VEHICLE_MIX,
   vehicleBuffer: null,
   vehicles: new Map(),
+  laneIds: [],
+  completedVehicles: 0,
   time: 0,
   running: false,
 }
+
+const VEHICLE_TYPES: VehicleType[] = ['CAR', 'BUS', 'TRUCK', 'BIKE', 'TRAM']
 
 function idmAcceleration(
   v: number,
@@ -59,21 +67,33 @@ function flushToBuffer(): void {
   for (const veh of ctx.vehicles.values()) {
     if (i >= MAX_VEHICLES) break
     const base = i * VEHICLE_BUFFER_STRIDE
-    ctx.vehicleBuffer[base] = veh.progress
-    ctx.vehicleBuffer[base + 1] = veh.currentSpeed
-    ctx.vehicleBuffer[base + 2] = veh.lateralOffset
-    ctx.vehicleBuffer[base + 3] = veh.laneChangeState === 'NONE' ? 0 : 1
+    ctx.vehicleBuffer[base + VEHICLE_BUFFER_OFFSETS.progress] = veh.progress
+    ctx.vehicleBuffer[base + VEHICLE_BUFFER_OFFSETS.speed] = veh.currentSpeed
+    ctx.vehicleBuffer[base + VEHICLE_BUFFER_OFFSETS.lateralOffset] = veh.lateralOffset
+    ctx.vehicleBuffer[base + VEHICLE_BUFFER_OFFSETS.laneChangeActive] = veh.laneChangeState === 'NONE' ? 0 : 1
+    ctx.vehicleBuffer[base + VEHICLE_BUFFER_OFFSETS.laneIndex] = Math.max(0, ctx.laneIds.indexOf(veh.currentLaneId))
+    ctx.vehicleBuffer[base + VEHICLE_BUFFER_OFFSETS.typeIndex] = Math.max(0, VEHICLE_TYPES.indexOf(veh.type))
     i++
   }
 }
 
-function resolveOriginLaneId(fromNodeId: string): string | null {
+function sampleVehicleType(): VehicleType {
+  const r = Math.random()
+  let acc = 0
+  for (const item of ctx.vehicleMix.ratios) {
+    acc += item.ratio
+    if (r <= acc) return item.type
+  }
+  return 'CAR'
+}
+
+function laneForOriginNode(fromNodeId: string): Lane | null {
   if (!ctx.topology) return null
   const originSegment = ctx.topology.segments.find(
     (segment) => segment.startNodeId === fromNodeId || segment.endNodeId === fromNodeId,
   )
   if (!originSegment) return null
-  return ctx.topology.lanes.find((lane) => lane.segmentId === originSegment.id)?.id ?? null
+  return ctx.topology.lanes.find((lane) => lane.segmentId === originSegment.id) ?? null
 }
 
 function spawnVehicles(dt: number): void {
@@ -81,20 +101,21 @@ function spawnVehicles(dt: number): void {
   for (const entry of ctx.odMatrix.pairs) {
     const rate = entry.volumePerHour / 3600
     if (Math.random() < rate * dt) {
-      const originLaneId = resolveOriginLaneId(entry.fromNodeId)
-      if (!originLaneId) continue
+      const originLane = laneForOriginNode(entry.fromNodeId)
+      if (!originLane) continue
       const vehicleId = `v_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+      const type = sampleVehicleType()
       const newVehicle: SimVehicle = {
         id: vehicleId,
-        type: 'CAR',
-        currentLaneId: originLaneId,
+        type,
+        currentLaneId: originLane.id,
         progress: 0,
         currentSpeed: 10,
         lateralOffset: 0,
         targetLaneId: null,
         laneChangeState: 'NONE',
         laneChangeProgress: 0,
-        plannedRoute: [{ laneId: originLaneId }],
+        plannedRoute: [{ laneId: originLane.id }],
         currentRouteIndex: 0,
         totalDistanceTraveled: 0,
         spawnTime: ctx.time,
@@ -111,7 +132,7 @@ function stepVehicles(dt: number): void {
     const v0 = ctx.idmParams.desiredSpeed
     const acc = idmAcceleration(veh.currentSpeed, v0, 0, 50, 0, 0, 0, 0)
     const newSpeed = Math.max(0, veh.currentSpeed + acc * dt)
-    const newProgress = veh.progress + newSpeed * dt
+    const newProgress = veh.progress + (newSpeed * dt) / 100
     const newVeh: SimVehicle = { ...veh, currentSpeed: newSpeed, progress: newProgress }
     if (newProgress > 1) {
       toRemove.push(id)
@@ -121,6 +142,7 @@ function stepVehicles(dt: number): void {
   }
   for (const id of toRemove) {
     ctx.vehicles.delete(id)
+    ctx.completedVehicles++
   }
 }
 
@@ -131,6 +153,7 @@ const simApi = {
     odMatrix: ODMatrix,
     idmParams: IDMParams,
     mobilParams: MOBILParams,
+    vehicleMix: VehicleMixConfig,
     sharedBuffer: SharedArrayBuffer,
   ): void {
     ctx.topology = topology
@@ -138,8 +161,11 @@ const simApi = {
     ctx.odMatrix = odMatrix
     ctx.idmParams = idmParams
     ctx.mobilParams = mobilParams
+    ctx.vehicleMix = vehicleMix
+    ctx.laneIds = topology.lanes.map((lane) => lane.id)
     ctx.vehicleBuffer = new Float32Array(sharedBuffer)
     ctx.vehicles.clear()
+    ctx.completedVehicles = 0
     ctx.time = 0
     ctx.running = false
   },
@@ -156,6 +182,7 @@ const simApi = {
     ctx.running = false
     ctx.time = 0
     ctx.vehicles.clear()
+    ctx.completedVehicles = 0
     if (ctx.vehicleBuffer) ctx.vehicleBuffer.fill(0)
   },
 
@@ -164,7 +191,14 @@ const simApi = {
       return {
         time: ctx.time,
         vehicleCount: ctx.vehicles.size,
-        stats: { totalVehicles: 0, completedVehicles: 0, averageSpeed: 0, averageDelay: 0, maxQueueLength: 0, throughput: 0 },
+        stats: {
+          totalVehicles: ctx.vehicles.size + ctx.completedVehicles,
+          completedVehicles: ctx.completedVehicles,
+          averageSpeed: 0,
+          averageDelay: 0,
+          maxQueueLength: 0,
+          throughput: ctx.completedVehicles,
+        },
       }
     }
     ctx.time += dt
@@ -183,12 +217,12 @@ const simApi = {
       time: ctx.time,
       vehicleCount: count,
       stats: {
-        totalVehicles: count,
-        completedVehicles: 0,
+        totalVehicles: count + ctx.completedVehicles,
+        completedVehicles: ctx.completedVehicles,
         averageSpeed: avgSpeed,
         averageDelay: 0,
         maxQueueLength: 0,
-        throughput: 0,
+        throughput: ctx.completedVehicles,
       },
     }
   },

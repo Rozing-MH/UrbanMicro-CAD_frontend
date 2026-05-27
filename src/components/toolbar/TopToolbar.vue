@@ -36,6 +36,10 @@
         <input type="checkbox" :checked="editor.showGrid" @change="editor.toggleGrid()" />
         显示网格
       </label>
+      <label class="snap-toggle">
+        <input type="checkbox" :checked="editor.continuousDrawing" @change="editor.toggleContinuousDrawing()" />
+        连续绘制
+      </label>
     </div>
 
     <div class="toolbar-section view-mode">
@@ -83,9 +87,14 @@ interface ToolDef { id: ToolMode; icon: string; label: string; title: string }
 const toolList: ToolDef[] = [
   { id: 'SELECT',          icon: '⬚', label: '选择',   title: '选择工具' },
   { id: 'ROAD_DRAW',       icon: '✎', label: '画路',   title: '绘制道路' },
+  { id: 'ROAD_UPGRADE',    icon: '⇧', label: '升级',   title: '道路升级刷' },
+  { id: 'PARALLEL_ROAD',   icon: '∥', label: '平行',   title: '平行路' },
+  { id: 'BULLDOZER',       icon: '⌫', label: '删除',   title: '推土机' },
   { id: 'ROAD_EDIT',       icon: '◆', label: '编辑',   title: '编辑节点' },
   { id: 'TRAFFIC_LIGHT',   icon: '🚦', label: '信号灯', title: '放置信号灯' },
   { id: 'LANE_CONNECTOR',  icon: '↪', label: '车道',   title: '车道连接' },
+  { id: 'LANE_RESTRICTION', icon: '⊘', label: '限制',   title: '车道限制与标线' },
+  { id: 'LANE_ARROW',      icon: '↱', label: '箭头',   title: '车道转向箭头' },
   { id: 'OD_MARKER',       icon: '⊕', label: 'OD',     title: 'OD 标记' },
   { id: 'MEASURE',         icon: '📏', label: '测量',   title: '距离测量' },
   { id: 'PAN',             icon: '✋', label: '平移',   title: '平移视图' },

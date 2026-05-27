@@ -46,6 +46,49 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     return `${arrow.nodeId}:${arrow.laneId}`
   }
 
+  function createLanesForSegment(seg: RoadSegment): Lane[] {
+    return seg.profile.lanes.map((laneDef, index) => ({
+      id: `${seg.id}:lane:${index}`,
+      segmentId: seg.id,
+      index,
+      direction: laneDef.direction,
+      type: laneDef.type,
+      width: laneDef.width,
+    }))
+  }
+
+  function ensureSegmentHalfEdges(seg: RoadSegment): void {
+    const forwardId = `${seg.id}:he:forward`
+    const backwardId = `${seg.id}:he:backward`
+    if (!halfEdges.value.has(forwardId)) {
+      halfEdges.value.set(forwardId, {
+        id: forwardId,
+        originNodeId: seg.startNodeId,
+        twinId: backwardId,
+        nextId: '',
+        segmentId: seg.id,
+      })
+    }
+    if (!halfEdges.value.has(backwardId)) {
+      halfEdges.value.set(backwardId, {
+        id: backwardId,
+        originNodeId: seg.endNodeId,
+        twinId: forwardId,
+        nextId: '',
+        segmentId: seg.id,
+      })
+    }
+  }
+
+  function attachSegmentToNode(nodeId: string, segmentId: string): void {
+    const node = nodes.value.get(nodeId)
+    if (!node || node.connectedSegmentIds.includes(segmentId)) return
+    nodes.value.set(nodeId, {
+      ...node,
+      connectedSegmentIds: [...node.connectedSegmentIds, segmentId],
+    })
+  }
+
   function addNode(node: RoadNode): void {
     nodes.value.set(node.id, node)
     topologyVersion.value++
@@ -69,6 +112,12 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
 
   function addSegment(seg: RoadSegment): void {
     segments.value.set(seg.id, seg)
+    attachSegmentToNode(seg.startNodeId, seg.id)
+    attachSegmentToNode(seg.endNodeId, seg.id)
+    for (const lane of createLanesForSegment(seg)) {
+      lanes.value.set(lane.id, lane)
+    }
+    ensureSegmentHalfEdges(seg)
     topologyVersion.value++
   }
 
@@ -83,6 +132,16 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     const seg = segments.value.get(id)
     if (!seg) return
     segments.value.delete(id)
+    for (const lane of Array.from(lanes.value.values())) {
+      if (lane.segmentId !== id) continue
+      lanes.value.delete(lane.id)
+      for (const arrow of Array.from(laneArrows.value.values())) {
+        if (arrow.laneId === lane.id) laneArrows.value.delete(laneArrowKey(arrow))
+      }
+    }
+    for (const he of Array.from(halfEdges.value.values())) {
+      if (he.segmentId === id) halfEdges.value.delete(he.id)
+    }
     for (const nodeId of [seg.startNodeId, seg.endNodeId]) {
       const n = nodes.value.get(nodeId)
       if (n) {
@@ -115,6 +174,16 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
       if (lane.segmentId === segmentId) result.push(lane)
     }
     return result
+  }
+
+  function setLaneArrow(arrow: LaneArrow): void {
+    laneArrows.value.set(laneArrowKey(arrow), arrow)
+    topologyVersion.value++
+  }
+
+  function removeLaneArrow(nodeId: string, laneId: string): void {
+    laneArrows.value.delete(`${nodeId}:${laneId}`)
+    topologyVersion.value++
   }
 
   function startDrawing(mode: DrawingMode, startPoint: Point2D, startNodeId: string | null): void {
@@ -199,8 +268,14 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     nodes.value = new Map(data.nodes.map((n) => [n.id, n]))
     segments.value = new Map(data.segments.map((s) => [s.id, s]))
     lanes.value = new Map(data.lanes.map((l) => [l.id, l]))
-    laneArrows.value = new Map(data.laneArrows.map((a) => [laneArrowKey(a), a]))
-    halfEdges.value = new Map(data.halfEdges.map((e) => [e.id, e]))
+    laneArrows.value = new Map((data.laneArrows ?? []).map((a) => [laneArrowKey(a), a]))
+    halfEdges.value = new Map((data.halfEdges ?? []).map((e) => [e.id, e]))
+    for (const segment of segments.value.values()) {
+      if (!Array.from(lanes.value.values()).some((lane) => lane.segmentId === segment.id)) {
+        for (const lane of createLanesForSegment(segment)) lanes.value.set(lane.id, lane)
+      }
+      ensureSegmentHalfEdges(segment)
+    }
     topologyVersion.value = data.version
   }
 
@@ -221,7 +296,7 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     nodeCount, segmentCount, isDrawing,
     addNode, updateNode, removeNode, getNode,
     addSegment, updateSegment, removeSegment, getSegment,
-    addLane, removeLane, getLanesBySegment,
+    addLane, removeLane, getLanesBySegment, setLaneArrow, removeLaneArrow,
     startDrawing, updatePreview, confirmDrawing, cancelDrawing,
     setDrawingMode, setElevationMode, setActiveCrossSection,
     selectNode, selectSegment, clearSelection, setHoveredSegment,

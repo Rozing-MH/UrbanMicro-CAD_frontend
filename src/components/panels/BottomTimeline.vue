@@ -22,6 +22,12 @@
         </select>
       </div>
 
+      <div class="view-switch">
+        <button class="view-btn" :class="{ active: editor.viewMode === 'TRAFFIC_VOLUME' }" @click="setTrafficVolume">流量</button>
+        <button class="view-btn" :class="{ active: editor.viewMode === 'TRAFFIC_ROUTES' }" @click="setTrafficRoutes">路线</button>
+        <button class="view-btn" :class="{ active: editor.viewMode === 'EDIT' }" @click="setHiddenView">隐藏</button>
+      </div>
+
       <div class="time-display">
         <span class="mono">{{ formatTime(sim.currentTime) }}</span>
         <span class="sep">/</span>
@@ -73,10 +79,14 @@ import { computed } from 'vue'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
+import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
+import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 
 const sim = useSimulationStore()
 const editor = useEditorStateStore()
 const evalStore = useEvaluationStore()
+const road = useRoadNetworkStore()
+const rules = useTrafficRuleStore()
 
 const stateLabel = computed(() => {
   switch (sim.state) {
@@ -107,16 +117,16 @@ function toggleCollapse(): void {
   editor.setPanelState({ bottomPanelOpen: !editor.panelState.bottomPanelOpen })
 }
 
-function onPlay(): void {
-  sim.setState('RUNNING')
+async function onPlay(): Promise<void> {
+  await sim.start(road.serialize(), rules.serialize(sim.odMatrix, sim.vehicleMix))
 }
 
-function onPause(): void {
-  sim.setState('PAUSED')
+async function onPause(): Promise<void> {
+  await sim.pause()
 }
 
-function onReset(): void {
-  sim.reset()
+async function onReset(): Promise<void> {
+  await sim.stop()
 }
 
 function onSpeedChange(ev: Event): void {
@@ -129,6 +139,20 @@ function onSeek(ev: MouseEvent): void {
   const rect = target.getBoundingClientRect()
   const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width))
   sim.setCurrentTime(ratio * sim.simulatedDuration)
+}
+
+function setTrafficVolume(): void {
+  editor.setViewMode('TRAFFIC_VOLUME')
+  evalStore.setEvalMode('DENSITY')
+}
+
+function setTrafficRoutes(): void {
+  editor.setViewMode('TRAFFIC_ROUTES')
+}
+
+function setHiddenView(): void {
+  editor.setViewMode('EDIT')
+  evalStore.setEvalMode('NONE')
 }
 </script>
 
@@ -169,6 +193,13 @@ function onSeek(ev: MouseEvent): void {
   background: #14171c; border: 1px solid #2a2f3a; color: #d8dde6;
   padding: 3px 6px; border-radius: 3px; font-size: 12px;
 }
+.view-switch { display: flex; align-items: center; gap: 4px; }
+.view-btn {
+  padding: 4px 8px;
+  background: #1d2129; border: 1px solid #383e4a; color: #c8cdd5;
+  border-radius: 3px; cursor: pointer; font-size: 11px;
+}
+.view-btn.active { background: #2c5d99; color: #fff; border-color: #4a8cd0; }
 .time-display { margin-left: auto; font-size: 13px; }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
 .dim { color: #6a7180; }

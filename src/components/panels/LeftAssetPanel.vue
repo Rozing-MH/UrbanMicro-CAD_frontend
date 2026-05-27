@@ -68,23 +68,59 @@
         </li>
       </ul>
     </div>
+
+    <div v-else-if="activeTab === 'simulation'" class="panel-content">
+      <div class="section-title">OD 矩阵</div>
+      <div v-if="sim.odMatrix.pairs.length === 0" class="placeholder small">暂无 OD，点击添加</div>
+      <div v-for="(pair, index) in sim.odMatrix.pairs" :key="index" class="od-row">
+        <input :value="pair.fromNodeId" placeholder="起点节点" @change="onODChange(index, 'fromNodeId', $event)" />
+        <input :value="pair.toNodeId" placeholder="终点节点" @change="onODChange(index, 'toNodeId', $event)" />
+        <input :value="pair.volumePerHour" type="number" min="0" step="10" @change="onODChange(index, 'volumePerHour', $event)" />
+        <button @click="sim.removeODPair(index)">×</button>
+      </div>
+      <button class="wide-btn" @click="sim.addODPair()">添加 OD</button>
+
+      <div class="section-title">IDM / MOBIL</div>
+      <label class="param-row">
+        <span>期望速度</span>
+        <input type="number" step="0.5" :value="sim.idmParams.desiredSpeed" @change="onIDMChange('desiredSpeed', $event)" />
+      </label>
+      <label class="param-row">
+        <span>安全时距</span>
+        <input type="number" step="0.1" :value="sim.idmParams.safeTimeHeadway" @change="onIDMChange('safeTimeHeadway', $event)" />
+      </label>
+      <label class="param-row">
+        <span>MOBIL 礼让</span>
+        <input type="number" step="0.05" :value="sim.mobilParams.politenessFactor" @change="onMOBILChange('politenessFactor', $event)" />
+      </label>
+      <label class="param-row">
+        <span>安全减速度</span>
+        <input type="number" step="0.1" :value="sim.mobilParams.bSafe" @change="onMOBILChange('bSafe', $event)" />
+      </label>
+    </div>
   </aside>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useEditorStateStore } from '@/stores/editorStateStore'
+import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
+import { useSimulationStore } from '@/stores/simulationStore'
 import { templateApi } from '@/api/templateApi'
 import type { CrossSectionProfile, LaneDef } from '@/types/road-network'
+import type { IDMParams, MOBILParams, ODPair } from '@/types/simulation'
 
-const editor = useEditorStateStore() as ReturnType<typeof useEditorStateStore> & { activeProfileId?: string }
+const editor = useEditorStateStore()
+const road = useRoadNetworkStore()
+const sim = useSimulationStore()
 
-type TabId = 'sections' | 'assets' | 'layers'
+type TabId = 'sections' | 'assets' | 'layers' | 'simulation'
 interface TabDef { id: TabId; label: string }
 const tabs: TabDef[] = [
   { id: 'sections', label: '横断面' },
   { id: 'assets', label: '资源' },
   { id: 'layers', label: '图层' },
+  { id: 'simulation', label: '仿真' },
 ]
 const activeTab = ref<TabId>('sections')
 const search = ref('')
@@ -93,6 +129,33 @@ const profiles = ref<CrossSectionProfile[]>([])
 const loading = ref(false)
 const assets = ref<Array<{ id: string; name: string; category: string; thumbnail: string }>>([])
 const loadingAssets = ref(false)
+
+const defaultProfiles: CrossSectionProfile[] = [
+  {
+    id: 'default-2lane',
+    name: '默认双车道',
+    lanes: [
+      { id: 'l1', width: 3.5, type: 'CAR', direction: 'FORWARD' },
+      { id: 'l2', width: 3.5, type: 'CAR', direction: 'BACKWARD' },
+    ],
+    median: { width: 0, type: 'NONE' },
+    sidewalk: { leftWidth: 1.5, rightWidth: 1.5 },
+    totalWidth: 8,
+  },
+  {
+    id: 'arterial-4lane-bus',
+    name: '四车道公交干道',
+    lanes: [
+      { id: 'l1', width: 3.5, type: 'BUS', direction: 'FORWARD' },
+      { id: 'l2', width: 3.5, type: 'CAR', direction: 'FORWARD' },
+      { id: 'l3', width: 3.5, type: 'CAR', direction: 'BACKWARD' },
+      { id: 'l4', width: 3.5, type: 'BUS', direction: 'BACKWARD' },
+    ],
+    median: { width: 1.5, type: 'GRASS' },
+    sidewalk: { leftWidth: 2, rightWidth: 2 },
+    totalWidth: 19.5,
+  },
+]
 
 interface LayerToggle { id: string; label: string; visible: boolean }
 const layers = ref<LayerToggle[]>([
@@ -136,7 +199,8 @@ function laneStyle(lane: LaneDef): Record<string, string> {
 }
 
 function onSelectProfile(profile: CrossSectionProfile): void {
-  (editor as unknown as { activeProfileId: string }).activeProfileId = profile.id
+  editor.setActiveProfile(profile.id)
+  road.setActiveCrossSection(profile.id)
 }
 
 function onDragStart(ev: DragEvent, id: string): void {
@@ -151,6 +215,27 @@ function toggleCollapse(): void {
   editor.setPanelState({ leftPanelOpen: !editor.panelState.leftPanelOpen })
 }
 
+function eventNumber(ev: Event): number {
+  return Number((ev.target as HTMLInputElement).value)
+}
+
+function eventString(ev: Event): string {
+  return (ev.target as HTMLInputElement).value
+}
+
+function onODChange(index: number, field: keyof ODPair, ev: Event): void {
+  const value = field === 'volumePerHour' ? eventNumber(ev) : eventString(ev)
+  sim.updateODPair(index, { [field]: value } as Partial<ODPair>)
+}
+
+function onIDMChange(field: keyof IDMParams, ev: Event): void {
+  sim.setIDMParams({ [field]: eventNumber(ev) } as Partial<IDMParams>)
+}
+
+function onMOBILChange(field: keyof MOBILParams, ev: Event): void {
+  sim.setMOBILParams({ [field]: eventNumber(ev) } as Partial<MOBILParams>)
+}
+
 onMounted(async () => {
   loading.value = true
   try {
@@ -158,6 +243,7 @@ onMounted(async () => {
   } catch {
     profiles.value = []
   } finally {
+    if (profiles.value.length === 0) profiles.value = defaultProfiles
     loading.value = false
   }
   loadingAssets.value = true
@@ -194,6 +280,23 @@ onMounted(async () => {
 }
 .panel-content { flex: 1; overflow-y: auto; padding: 4px 8px 12px; }
 .placeholder { padding: 20px 8px; color: #6a7180; text-align: center; font-size: 12px; }
+.placeholder.small { padding: 8px; }
+.section-title { margin: 10px 0 6px; color: #6cb6ff; font-size: 12px; font-weight: 600; }
+.od-row { display: grid; grid-template-columns: 1fr 1fr 70px 24px; gap: 4px; margin-bottom: 5px; }
+.od-row input,
+.param-row input {
+  min-width: 0;
+  padding: 4px 6px; background: #14171c; border: 1px solid #2a2f3a;
+  color: #d8dde6; border-radius: 3px; font-size: 11px;
+}
+.od-row button,
+.wide-btn {
+  background: #2a2f3a; border: 1px solid #383e4a; color: #d8dde6;
+  border-radius: 3px; cursor: pointer; font-size: 11px;
+}
+.wide-btn { width: 100%; padding: 6px; margin: 4px 0 10px; }
+.param-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: #aab2bf; }
+.param-row input { width: 90px; }
 .asset-list { list-style: none; padding: 0; margin: 0; }
 .asset-item {
   display: flex; gap: 8px; padding: 6px;

@@ -3,7 +3,9 @@ import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig 
 const TOKEN_KEY = 'urbanmicro_jwt'
 
 export interface ApiResponse<T> {
-  success: boolean
+  success?: boolean
+  code?: number
+  message?: string
   data?: T
   error?: string
   meta?: {
@@ -11,6 +13,26 @@ export interface ApiResponse<T> {
     page: number
     limit: number
   }
+}
+
+export interface PageResponse<T> {
+  records?: T[]
+  content?: T[]
+  items?: T[]
+  total: number
+  page?: number
+  size?: number
+  limit?: number
+}
+
+export function isApiSuccess<T>(res: ApiResponse<T>): boolean {
+  if (typeof res.success === 'boolean') return res.success
+  if (typeof res.code === 'number') return res.code >= 200 && res.code < 300
+  return true
+}
+
+export function getApiError<T>(res: ApiResponse<T>, fallback: string): string {
+  return res.error || res.message || fallback
 }
 
 export function getToken(): string | null {

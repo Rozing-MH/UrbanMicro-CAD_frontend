@@ -1,7 +1,9 @@
 import * as THREE from 'three'
 import { ref, type Ref } from 'vue'
 import type { SimVehicle } from '@/types/simulation'
-import { MAX_VEHICLES, VEHICLE_BUFFER_STRIDE } from '@/types/simulation'
+import { MAX_VEHICLES, VEHICLE_BUFFER_OFFSETS, VEHICLE_BUFFER_STRIDE } from '@/types/simulation'
+
+const VEHICLE_TYPES = ['CAR', 'BUS', 'TRUCK', 'BIKE', 'TRAM'] as const
 
 const VEHICLE_COLORS: Record<string, number> = {
   CAR: 0x4fc3f7,
@@ -35,7 +37,7 @@ export function useVehicleRenderer(scene: Ref<THREE.Scene | null>) {
 
   function init(): void {
     if (!scene.value) return
-    for (const type of ['CAR', 'BUS', 'TRUCK', 'BIKE', 'TRAM']) {
+    for (const type of VEHICLE_TYPES) {
       const mesh = createVehicleMesh(type, MAX_VEHICLES)
       scene.value.add(mesh)
       meshes.set(type, mesh)
@@ -76,13 +78,17 @@ export function useVehicleRenderer(scene: Ref<THREE.Scene | null>) {
 
   function updateFromBuffer(vehicleBuffer: Float32Array | null, count: number, lanePositions: Map<string, THREE.Vector3[]>, laneIds: string[]): void {
     if (!vehicleBuffer) return
-    const carMesh = meshes.get('CAR')
-    if (!carMesh) return
-    let rendered = 0
+    const renderedCounts = new Map<string, number>()
+    for (const type of VEHICLE_TYPES) renderedCounts.set(type, 0)
     for (let i = 0; i < Math.min(count, MAX_VEHICLES); i++) {
       const base = i * VEHICLE_BUFFER_STRIDE
-      const progress = vehicleBuffer[base]
-      const laneId = laneIds[i % laneIds.length]
+      const progress = vehicleBuffer[base + VEHICLE_BUFFER_OFFSETS.progress]
+      const laneIndex = Math.trunc(vehicleBuffer[base + VEHICLE_BUFFER_OFFSETS.laneIndex])
+      const typeIndex = Math.trunc(vehicleBuffer[base + VEHICLE_BUFFER_OFFSETS.typeIndex])
+      const vehicleType = VEHICLE_TYPES[typeIndex] ?? 'CAR'
+      const mesh = meshes.get(vehicleType)
+      const laneId = laneIds[laneIndex]
+      if (!mesh || !laneId) continue
       const positions = lanePositions.get(laneId)
       if (!positions || positions.length === 0) continue
       const ptIdx = Math.min(Math.floor(progress * (positions.length - 1)), positions.length - 2)
@@ -91,11 +97,14 @@ export function useVehicleRenderer(scene: Ref<THREE.Scene | null>) {
       dummy.position.set(pos.x, pos.y + 0.7, pos.z)
       dummy.lookAt(next.x, next.y + 0.7, next.z)
       dummy.updateMatrix()
-      carMesh.setMatrixAt(rendered, dummy.matrix)
-      rendered++
+      const rendered = renderedCounts.get(vehicleType) ?? 0
+      mesh.setMatrixAt(rendered, dummy.matrix)
+      renderedCounts.set(vehicleType, rendered + 1)
     }
-    carMesh.count = rendered
-    carMesh.instanceMatrix.needsUpdate = true
+    for (const [type, mesh] of meshes) {
+      mesh.count = renderedCounts.get(type) ?? 0
+      mesh.instanceMatrix.needsUpdate = true
+    }
   }
 
   function dispose(): void {

@@ -8,6 +8,8 @@ export interface ReportSummary {
   averageDelay: number
 }
 
+export type ReportFormat = 'CSV' | 'PDF'
+
 export const reportApi = {
   async generate(projectId: string, snapshot: unknown): Promise<ReportSummary> {
     const res = await apiClient.post<ApiResponse<ReportSummary>>(`/reports/generate`, { projectId, snapshot })
@@ -18,6 +20,11 @@ export const reportApi = {
   async list(projectId: string): Promise<ReportSummary[]> {
     const res = await apiClient.get<ApiResponse<ReportSummary[]>>(`/reports?projectId=${projectId}`)
     return res.data.data ?? []
+  },
+
+  async exportReport(projectId: string, format: ReportFormat, metrics: unknown): Promise<Blob> {
+    const res = await apiClient.post('/reports/export', { projectId, format, metrics }, { responseType: 'blob' })
+    return res.data as Blob
   },
 
   async download(reportId: string): Promise<Blob> {

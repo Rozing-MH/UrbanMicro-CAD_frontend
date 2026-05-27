@@ -1,12 +1,18 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import type { Remote } from 'comlink'
+import { getSimulationWorker } from '@/workers'
+import type { TopologyData } from '@/types/road-network'
+import type { RuleData } from '@/types/traffic-rule'
 import type {
   SimVehicle,
   ODMatrix,
   IDMParams,
   MOBILParams,
   SimulationStats,
+  SimulationFrame,
 } from '@/types/simulation'
+import type { SimulationWorkerApi } from '@/workers/simulation.worker'
 import {
   DEFAULT_IDM,
   DEFAULT_MOBIL,
@@ -44,6 +50,8 @@ export const useSimulationStore = defineStore('simulation', () => {
 
   let sharedBuffer: SharedArrayBuffer | null = null
   let vehicleView: Float32Array | null = null
+  let worker: Remote<SimulationWorkerApi> | null = null
+  let lastTickAt = 0
 
   const isRunning = computed(() => state.value === 'RUNNING')
   const progress = computed(() =>
@@ -69,6 +77,45 @@ export const useSimulationStore = defineStore('simulation', () => {
     state.value = s
   }
 
+  async function start(topology: TopologyData, rules: RuleData): Promise<void> {
+    if (!sharedBuffer) initSharedBuffer()
+    if (!sharedBuffer) return
+    worker = getSimulationWorker()
+    await worker.init(
+      topology,
+      rules,
+      odMatrix.value,
+      idmParams.value,
+      mobilParams.value,
+      vehicleMix.value,
+      sharedBuffer,
+    )
+    await worker.start()
+    state.value = 'RUNNING'
+    lastTickAt = performance.now()
+  }
+
+  async function pause(): Promise<void> {
+    await worker?.pause()
+    state.value = 'PAUSED'
+  }
+
+  async function tick(now = performance.now()): Promise<SimulationFrame | null> {
+    if (state.value !== 'RUNNING' || !worker) return null
+    const dt = Math.min(0.1, Math.max(0.001, ((now - lastTickAt) / 1000) * timeScale.value))
+    lastTickAt = now
+    const frame = await worker.tick(dt)
+    currentTime.value = frame.time
+    vehicleCount.value = frame.vehicleCount
+    stats.value = frame.stats
+    return frame
+  }
+
+  async function stop(): Promise<void> {
+    await worker?.reset()
+    reset()
+  }
+
   function setCurrentTime(t: number): void {
     currentTime.value = t
   }
@@ -87,6 +134,24 @@ export const useSimulationStore = defineStore('simulation', () => {
 
   function setODMatrix(matrix: ODMatrix): void {
     odMatrix.value = matrix
+  }
+
+  function addODPair(): void {
+    odMatrix.value = {
+      pairs: [...odMatrix.value.pairs, { fromNodeId: '', toNodeId: '', volumePerHour: 360 }],
+    }
+  }
+
+  function updateODPair(index: number, patch: Partial<ODMatrix['pairs'][number]>): void {
+    odMatrix.value = {
+      pairs: odMatrix.value.pairs.map((pair, i) => (i === index ? { ...pair, ...patch } : pair)),
+    }
+  }
+
+  function removeODPair(index: number): void {
+    odMatrix.value = {
+      pairs: odMatrix.value.pairs.filter((_, i) => i !== index),
+    }
   }
 
   function setIDMParams(p: Partial<IDMParams>): void {
@@ -114,6 +179,7 @@ export const useSimulationStore = defineStore('simulation', () => {
       maxQueueLength: 0,
       throughput: 0,
     }
+    if (vehicleView) vehicleView.fill(0)
   }
 
   return {
@@ -121,7 +187,9 @@ export const useSimulationStore = defineStore('simulation', () => {
     odMatrix, idmParams, mobilParams, vehicleMix, stats,
     isRunning, progress,
     initSharedBuffer, getSharedBuffer, getVehicleView,
+    start, pause, tick, stop,
     setState, setCurrentTime, setVehicleCount, setTimeScale, setSimulatedDuration,
-    setODMatrix, setIDMParams, setMOBILParams, updateStats, reset,
+    setODMatrix, addODPair, updateODPair, removeODPair,
+    setIDMParams, setMOBILParams, updateStats, reset,
   }
 })

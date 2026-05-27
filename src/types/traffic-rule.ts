@@ -29,7 +29,7 @@ export interface SignalStep {
 export interface TrafficLightController {
   id: string
   nodeId: string
-  strategy: 'FIXED' | 'ACTUATED'
+  strategy: 'FIXED' | 'ACTUATED' | 'FIXED_TIMING' | 'SENSOR_ACTUATED'
   steps: SignalStep[]
   sensors: VirtualSensor[]
   currentStepIndex: number
@@ -46,6 +46,8 @@ export type MarkingType =
   | 'SOLID_YELLOW'
   | 'DASHED_YELLOW'
   | 'DOUBLE_SOLID_YELLOW'
+  | 'SOLID_DOUBLE_YELLOW'
+  | 'NONE'
 
 export interface LaneRestriction {
   laneId: string
@@ -79,6 +81,7 @@ export interface TurnRestriction {
   fromSegmentId: string
   toSegmentId: string
   restriction: 'NO_LEFT' | 'NO_RIGHT' | 'NO_STRAIGHT' | 'NO_UTURN' | 'NONE'
+  direction?: TurnDirection
 }
 
 // ============================================================
