@@ -1,0 +1,6 @@
+[     202ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5177/favicon.ico:0
+[    8117ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5177/api/templates?category=ROAD_SECTION:0
+[    8119ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5177/api/projects/local-command-check:0
+[    8131ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5177/api/templates/cross-sections:0
+[    8142ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5177/api/templates:0
+[    8150ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5177/api/templates/assets:0

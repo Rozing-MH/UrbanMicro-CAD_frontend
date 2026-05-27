@@ -170,7 +170,14 @@ import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { historyStack } from '@/commands/HistoryStack'
-import { DeleteSegmentCommand, UpgradeSegmentCommand } from '@/commands/roadCommands'
+import {
+  DeleteSegmentCommand,
+  SetLaneRestrictionCommand,
+  UpdateNodeCommand,
+  UpdateSegmentCommand,
+  UpdateTrafficLightCommand,
+  UpgradeSegmentCommand,
+} from '@/commands/roadCommands'
 import { buildSegmentGeometry } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
 import type { ElevationMode, Lane, LaneDirection, RoadSegment } from '@/types/road-network'
@@ -217,13 +224,24 @@ function directionLabel(d: LaneDirection): string {
   return d === 'FORWARD' ? '→' : d === 'BACKWARD' ? '←' : '↔'
 }
 
-function updateSegment(patch: Partial<RoadSegment>): void {
+async function executePanelCommand(command: Parameters<typeof historyStack.execute>[0]): Promise<void> {
+  try {
+    await historyStack.execute(command)
+  } catch (err) {
+    editor.showNotification({
+      type: 'error',
+      message: err instanceof Error ? err.message : '属性更新失败，请检查当前选择状态',
+    })
+  }
+}
+
+async function updateSegment(patch: Partial<RoadSegment>): Promise<void> {
   if (!selectedSegment.value) return
-  road.updateSegment(selectedSegment.value.id, patch)
+  await executePanelCommand(new UpdateSegmentCommand(selectedSegment.value.id, patch))
 }
 
 function onSegmentCurvedChange(ev: Event): void {
-  updateSegment({ isCurved: (ev.target as HTMLInputElement).checked })
+  void updateSegment({ isCurved: (ev.target as HTMLInputElement).checked })
 }
 
 function defaultRestriction(laneId: string): LaneRestriction {
@@ -243,11 +261,30 @@ function laneRestriction(laneId: string): LaneRestriction {
 }
 
 function setLaneRestriction(laneId: string, patch: Partial<LaneRestriction>): void {
-  rules.setLaneRestriction({ ...laneRestriction(laneId), ...patch, laneId })
+  const restriction = { ...laneRestriction(laneId), ...patch, laneId }
+  void executePanelCommand(new SetLaneRestrictionCommand(restriction))
+}
+
+function readFiniteNumber(ev: Event): number | null {
+  const rawValue = (ev.target as HTMLInputElement).value.trim()
+  if (!rawValue) {
+    editor.showNotification({ type: 'warning', message: '请输入有效数字' })
+    return null
+  }
+  const value = Number(rawValue)
+  if (Number.isFinite(value)) return value
+  editor.showNotification({ type: 'warning', message: '请输入有效数字' })
+  return null
 }
 
 function onLaneSpeedChange(laneId: string, ev: Event): void {
-  setLaneRestriction(laneId, { speedLimit: Number((ev.target as HTMLInputElement).value) })
+  const speedLimit = readFiniteNumber(ev)
+  if (speedLimit === null) return
+  if (speedLimit < 5 || speedLimit > 120) {
+    editor.showNotification({ type: 'warning', message: '限速需在 5 到 120 km/h 之间' })
+    return
+  }
+  setLaneRestriction(laneId, { speedLimit })
 }
 
 function onLaneMarkingChange(laneId: string, ev: Event): void {
@@ -270,25 +307,21 @@ function onLaneBusOnlyChange(laneId: string, ev: Event): void {
 function onElevationModeChange(ev: Event): void {
   if (!selectedSegment.value) return
   const mode = (ev.target as HTMLSelectElement).value as ElevationMode
-  road.updateSegment(selectedSegment.value.id, {
-    elevation: { ...selectedSegment.value.elevation, mode },
-  })
+  void updateSegment({ elevation: { ...selectedSegment.value.elevation, mode } })
 }
 
 function onElevationStartChange(ev: Event): void {
   if (!selectedSegment.value) return
-  const startZ = Number((ev.target as HTMLInputElement).value)
-  road.updateSegment(selectedSegment.value.id, {
-    elevation: { ...selectedSegment.value.elevation, startZ },
-  })
+  const startZ = readFiniteNumber(ev)
+  if (startZ === null) return
+  void updateSegment({ elevation: { ...selectedSegment.value.elevation, startZ } })
 }
 
 function onElevationEndChange(ev: Event): void {
   if (!selectedSegment.value) return
-  const endZ = Number((ev.target as HTMLInputElement).value)
-  road.updateSegment(selectedSegment.value.id, {
-    elevation: { ...selectedSegment.value.elevation, endZ },
-  })
+  const endZ = readFiniteNumber(ev)
+  if (endZ === null) return
+  void updateSegment({ elevation: { ...selectedSegment.value.elevation, endZ } })
 }
 
 async function applyActiveProfile(): Promise<void> {
@@ -320,14 +353,15 @@ async function deleteSelected(): Promise<void> {
 
 function onNodeElevationChange(ev: Event): void {
   if (!selectedNode.value) return
-  const elevation = Number((ev.target as HTMLInputElement).value)
-  road.updateNode(selectedNode.value.id, { elevation })
+  const elevation = readFiniteNumber(ev)
+  if (elevation === null) return
+  void executePanelCommand(new UpdateNodeCommand(selectedNode.value.id, { elevation }))
 }
 
 function onControlModeChange(ev: Event): void {
   if (!selectedNode.value) return
   const controlMode = (ev.target as HTMLSelectElement).value as 'NONE' | 'YIELD' | 'TRAFFIC_LIGHT' | 'ROUNDABOUT'
-  road.updateNode(selectedNode.value.id, { controlMode })
+  void executePanelCommand(new UpdateNodeCommand(selectedNode.value.id, { controlMode }))
 }
 
 const cycleLength = computed<number>(() => {
@@ -341,7 +375,7 @@ const cycleLength = computed<number>(() => {
 function onLightStrategyChange(ev: Event): void {
   if (!selectedLight.value) return
   const strategy = (ev.target as HTMLSelectElement).value as 'FIXED' | 'ACTUATED'
-  rules.updateTrafficLight(selectedLight.value.id, { strategy })
+  void executePanelCommand(new UpdateTrafficLightCommand(selectedLight.value.id, { strategy }))
 }
 </script>
 

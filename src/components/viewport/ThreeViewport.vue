@@ -24,10 +24,10 @@ import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
-import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { historyStack } from '@/commands/HistoryStack'
 import {
   AddSegmentCommand,
+  AddTrafficLightCommand,
   CreateParallelSegmentCommand,
   DeleteSegmentCommand,
   UpgradeSegmentCommand,
@@ -70,7 +70,6 @@ const roadStore = useRoadNetworkStore()
 const editorStore = useEditorStateStore()
 const simStore = useSimulationStore()
 const evaluationStore = useEvaluationStore()
-const trafficRuleStore = useTrafficRuleStore()
 
 // Pass containerRef at construction — renderer auto-inits via its own onMounted
 const renderer = useThreeRenderer(containerRef)
@@ -365,11 +364,11 @@ async function handleParallelRoad(event: MouseEvent): Promise<void> {
   syncRendererWithStore()
 }
 
-function handleTrafficLight(event: MouseEvent): void {
+async function handleTrafficLight(event: MouseEvent): Promise<void> {
   const picked = pickSceneObject(event)
   if (!picked?.nodeId) return
   const id = `tl_${picked.nodeId}`
-  trafficRuleStore.addTrafficLight({
+  await historyStack.execute(new AddTrafficLightCommand({
     id,
     nodeId: picked.nodeId,
     strategy: 'FIXED',
@@ -387,9 +386,7 @@ function handleTrafficLight(event: MouseEvent): void {
     sensors: [],
     currentStepIndex: 0,
     timeInCurrentStep: 0,
-  })
-  trafficRuleStore.selectLight(id)
-  roadStore.updateNode(picked.nodeId, { controlMode: 'TRAFFIC_LIGHT' })
+  }))
 }
 
 async function onPointerDown(event: MouseEvent): Promise<void> {
@@ -402,7 +399,7 @@ async function onPointerDown(event: MouseEvent): Promise<void> {
   else if (editorStore.activeTool === 'ROAD_UPGRADE') await handleRoadUpgrade(event)
   else if (editorStore.activeTool === 'PARALLEL_ROAD') await handleParallelRoad(event)
   else if (editorStore.activeTool === 'BULLDOZER') await handleBulldozer(event)
-  else if (editorStore.activeTool === 'TRAFFIC_LIGHT') handleTrafficLight(event)
+  else if (editorStore.activeTool === 'TRAFFIC_LIGHT') await handleTrafficLight(event)
 }
 
 function syncRendererWithStore(): void {

@@ -1,2 +1,13 @@
 export { HistoryStack, historyStack } from './HistoryStack'
-export { AddSegmentCommand, DeleteSegmentCommand, MoveNodeCommand } from './roadCommands'
+export {
+  AddSegmentCommand,
+  AddTrafficLightCommand,
+  CreateParallelSegmentCommand,
+  DeleteSegmentCommand,
+  MoveNodeCommand,
+  SetLaneRestrictionCommand,
+  UpdateNodeCommand,
+  UpdateSegmentCommand,
+  UpdateTrafficLightCommand,
+  UpgradeSegmentCommand,
+} from './roadCommands'

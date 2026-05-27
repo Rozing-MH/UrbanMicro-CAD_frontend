@@ -7,7 +7,7 @@ import type {
   RoadNode,
   RoadSegment,
 } from '@/types/road-network'
-import type { LaneConnector, LaneRestriction, TurnRestriction } from '@/types/traffic-rule'
+import type { LaneConnector, LaneRestriction, TrafficLightController, TurnRestriction } from '@/types/traffic-rule'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 
@@ -255,6 +255,181 @@ export class UpgradeSegmentCommand implements ICommand {
 export class CreateParallelSegmentCommand extends AddSegmentCommand {
   getDescription(): string {
     return 'Create parallel road segment'
+  }
+}
+
+export class UpdateSegmentCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private beforeSegment: RoadSegment | null = null
+
+  constructor(
+    private segmentId: string,
+    private patch: Partial<RoadSegment>,
+  ) {}
+
+  execute(): void {
+    const store = useRoadNetworkStore()
+    const segment = store.getSegment(this.segmentId)
+    if (!segment) throw new Error('无法更新路段：目标路段不存在')
+    if (!this.beforeSegment) this.beforeSegment = cloneSegment(segment)
+    store.updateSegment(this.segmentId, this.patch)
+  }
+
+  undo(): void {
+    if (!this.beforeSegment) return
+    const store = useRoadNetworkStore()
+    store.updateSegment(this.segmentId, cloneSegment(this.beforeSegment))
+  }
+
+  getDescription(): string {
+    return `Update road segment ${this.segmentId}`
+  }
+}
+
+export class UpdateNodeCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private beforeNode: RoadNode | null = null
+
+  constructor(
+    private nodeId: string,
+    private patch: Partial<RoadNode>,
+  ) {}
+
+  execute(): void {
+    const store = useRoadNetworkStore()
+    const node = store.getNode(this.nodeId)
+    if (!node) throw new Error('无法更新节点：目标节点不存在')
+    if (!this.beforeNode) this.beforeNode = cloneNode(node)
+    store.updateNode(this.nodeId, this.patch)
+  }
+
+  undo(): void {
+    if (!this.beforeNode) return
+    const store = useRoadNetworkStore()
+    store.updateNode(this.nodeId, cloneNode(this.beforeNode))
+  }
+
+  getDescription(): string {
+    return `Update road node ${this.nodeId}`
+  }
+}
+
+function cloneLaneRestriction(restriction: LaneRestriction): LaneRestriction {
+  return {
+    ...restriction,
+    allowedVehicleTypes: [...restriction.allowedVehicleTypes],
+  }
+}
+
+function cloneTrafficLight(light: TrafficLightController): TrafficLightController {
+  return {
+    ...light,
+    steps: light.steps.map((step) => ({
+      ...step,
+      greenLanes: [...step.greenLanes],
+      sensorBindings: step.sensorBindings.map((binding) => ({ ...binding })),
+    })),
+    sensors: light.sensors.map((sensor) => ({ ...sensor })),
+  }
+}
+
+export class SetLaneRestrictionCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private beforeRestriction: LaneRestriction | null | undefined
+
+  constructor(private restriction: LaneRestriction) {}
+
+  execute(): void {
+    const rules = useTrafficRuleStore()
+    if (this.beforeRestriction === undefined) {
+      const existing = rules.laneRestrictions.get(this.restriction.laneId)
+      this.beforeRestriction = existing ? cloneLaneRestriction(existing) : null
+    }
+    rules.setLaneRestriction(cloneLaneRestriction(this.restriction))
+  }
+
+  undo(): void {
+    const rules = useTrafficRuleStore()
+    if (this.beforeRestriction) {
+      rules.setLaneRestriction(cloneLaneRestriction(this.beforeRestriction))
+      return
+    }
+    rules.removeLaneRestriction(this.restriction.laneId)
+  }
+
+  getDescription(): string {
+    return `Set lane restriction ${this.restriction.laneId}`
+  }
+}
+
+export class UpdateTrafficLightCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private beforeLight: TrafficLightController | null = null
+
+  constructor(
+    private lightId: string,
+    private patch: Partial<TrafficLightController>,
+  ) {}
+
+  execute(): void {
+    const rules = useTrafficRuleStore()
+    const light = rules.trafficLights.get(this.lightId)
+    if (!light) throw new Error('无法更新信号灯：目标控制器不存在')
+    if (!this.beforeLight) this.beforeLight = cloneTrafficLight(light)
+    rules.updateTrafficLight(this.lightId, this.patch)
+  }
+
+  undo(): void {
+    if (!this.beforeLight) return
+    const rules = useTrafficRuleStore()
+    rules.addTrafficLight(cloneTrafficLight(this.beforeLight))
+  }
+
+  getDescription(): string {
+    return `Update traffic light ${this.lightId}`
+  }
+}
+
+export class AddTrafficLightCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private beforeLight: TrafficLightController | null | undefined
+  private beforeNode: RoadNode | null = null
+  private beforeSelectedLightId: string | null = null
+
+  constructor(private light: TrafficLightController) {}
+
+  execute(): void {
+    const road = useRoadNetworkStore()
+    const rules = useTrafficRuleStore()
+    const node = road.getNode(this.light.nodeId)
+    if (!node) throw new Error('无法添加信号灯：目标节点不存在')
+    if (!this.beforeNode) this.beforeNode = cloneNode(node)
+    if (this.beforeLight === undefined) {
+      const existing = rules.trafficLights.get(this.light.id)
+      this.beforeLight = existing ? cloneTrafficLight(existing) : null
+      this.beforeSelectedLightId = rules.selectedLightId
+    }
+    if (!this.beforeLight) {
+      rules.addTrafficLight(cloneTrafficLight(this.light))
+      road.updateNode(this.light.nodeId, { controlMode: 'TRAFFIC_LIGHT' })
+    }
+    rules.selectLight(this.light.id)
+  }
+
+  undo(): void {
+    const road = useRoadNetworkStore()
+    const rules = useTrafficRuleStore()
+    if (this.beforeLight) {
+      rules.addTrafficLight(cloneTrafficLight(this.beforeLight))
+    } else {
+      rules.removeTrafficLight(this.light.id)
+    }
+    if (this.beforeNode) road.updateNode(this.beforeNode.id, cloneNode(this.beforeNode))
+    rules.selectLight(this.beforeSelectedLightId)
+  }
+
+  getDescription(): string {
+    return `Add traffic light ${this.light.id}`
   }
 }
 
