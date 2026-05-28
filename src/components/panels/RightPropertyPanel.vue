@@ -186,6 +186,28 @@
         <h3 class="prop-title">信号灯控制器</h3>
         <TrafficLightEditor :light="selectedLight" />
       </section>
+
+      <section v-if="editor.panelState.propertiesTab === 'validation'" class="prop-group">
+        <h3 class="prop-title">规则校验</h3>
+        <div class="val-header">
+          <button class="primary-btn val-run-btn" @click="onRunValidation">运行验证</button>
+          <span v-if="valResult" class="val-summary">
+            {{ valErrorCount }} 错误 / {{ valWarningCount }} 警告
+          </span>
+        </div>
+        <div v-if="valResult && valResult.issues.length === 0" class="val-ok">所有规则验证通过</div>
+        <ul v-else class="val-list">
+          <li
+            v-for="issue in valSortedIssues"
+            :key="`${issue.checkId}:${issue.entityId}`"
+            class="val-item"
+            :class="issue.severity"
+          >
+            <span class="val-severity">{{ issue.severity === 'error' ? '✗' : '⚠' }}</span>
+            <span class="val-msg">{{ issue.message }}</span>
+          </li>
+        </ul>
+      </section>
     </div>
   </aside>
 </template>
@@ -211,18 +233,21 @@ import {
 import { buildSegmentGeometry } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
 import TrafficLightEditor from '@/components/panels/TrafficLightEditor.vue'
+import { useRuleValidation } from '@/composables/useRuleValidation'
 import type { ElevationMode, Lane, LaneArrow, LaneDirection, RoadSegment, TurnDirection } from '@/types/road-network'
 import type { Crosswalk, LaneRestriction, MarkingType, TurnRestriction } from '@/types/traffic-rule'
 
 const editor = useEditorStateStore()
 const road = useRoadNetworkStore()
 const rules = useTrafficRuleStore()
+const { lastResult: valResult, runValidation } = useRuleValidation()
 
 interface TabDef { id: string; label: string }
 const tabs: TabDef[] = [
   { id: 'geometry', label: '几何' },
   { id: 'rules', label: '规则' },
   { id: 'simulation', label: '仿真' },
+  { id: 'validation', label: '验证' },
 ]
 
 const selectedSegment = computed<RoadSegment | null>(() => {
@@ -504,6 +529,30 @@ function onCrosswalkToggle(pos: Crosswalk['position'], ev: Event): void {
     isActive,
   }))
 }
+
+const valErrorCount = computed(() => valResult.value?.issues.filter(i => i.severity === 'error').length ?? 0)
+const valWarningCount = computed(() => valResult.value?.issues.filter(i => i.severity === 'warning').length ?? 0)
+const valSortedIssues = computed(() =>
+  (valResult.value?.issues ?? []).slice().sort((a, b) => {
+    if (a.severity !== b.severity) return a.severity === 'error' ? -1 : 1
+    return a.checkId.localeCompare(b.checkId)
+  }),
+)
+
+function onRunValidation(): void {
+  const result = runValidation()
+  if (result.issues.length === 0) {
+    editor.showNotification({ type: 'success', message: '所有规则验证通过', durationMs: 3000 })
+  } else {
+    const e = result.issues.filter(i => i.severity === 'error').length
+    const w = result.issues.filter(i => i.severity === 'warning').length
+    editor.showNotification({
+      type: e > 0 ? 'error' : 'warning',
+      message: `发现 ${e} 个错误，${w} 个警告`,
+      durationMs: 4000,
+    })
+  }
+}
 </script>
 
 <style scoped>
@@ -577,4 +626,14 @@ function onCrosswalkToggle(pos: Crosswalk['position'], ev: Event): void {
 .arrow-dirs { flex: 1; color: #d8dde6; }
 .crosswalk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .crosswalk-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #aab2bf; cursor: pointer; }
+.val-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.val-run-btn { width: auto; padding: 5px 14px; }
+.val-summary { font-size: 12px; color: #aab2bf; }
+.val-ok { text-align: center; padding: 16px; color: #6cb6ff; font-size: 13px; }
+.val-list { list-style: none; padding: 0; margin: 0; }
+.val-item { display: flex; align-items: flex-start; gap: 6px; padding: 5px 0; font-size: 11px; border-bottom: 1px dashed #2a2f3a; }
+.val-item.error .val-severity { color: #a13c3c; }
+.val-item.warning .val-severity { color: #e3a857; }
+.val-severity { flex-shrink: 0; width: 14px; text-align: center; font-size: 12px; }
+.val-msg { color: #d8dde6; line-height: 1.4; }
 </style>

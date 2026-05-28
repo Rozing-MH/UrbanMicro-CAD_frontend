@@ -55,6 +55,7 @@
     </div>
 
     <div class="toolbar-section actions">
+      <button class="action-btn validate-btn" @click="onValidateRules">检查规则</button>
       <button class="action-btn" :disabled="saving" @click="onSave">
         {{ saving ? '保存中…' : '保存' }}
       </button>
@@ -73,6 +74,7 @@ import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { historyStack } from '@/commands/HistoryStack'
 import { projectApi } from '@/api/projectApi'
+import { useRuleValidation } from '@/composables/useRuleValidation'
 
 const router = useRouter()
 const editor = useEditorStateStore()
@@ -80,6 +82,7 @@ const project = useProjectStore()
 const roadStore = useRoadNetworkStore()
 const ruleStore = useTrafficRuleStore()
 const simStore = useSimulationStore()
+const { runValidation } = useRuleValidation()
 
 const saving = ref(false)
 
@@ -136,6 +139,21 @@ const topology = computed(() => ({
   halfEdges: Array.from(roadStore.halfEdges.values()),
   version: roadStore.topologyVersion,
 }))
+
+function onValidateRules(): void {
+  const result = runValidation()
+  if (result.issues.length === 0) {
+    editor.showNotification({ type: 'success', message: '所有规则验证通过', durationMs: 3000 })
+  } else {
+    const e = result.issues.filter(i => i.severity === 'error').length
+    const w = result.issues.filter(i => i.severity === 'warning').length
+    editor.showNotification({
+      type: e > 0 ? 'error' : 'warning',
+      message: `发现 ${e} 个错误，${w} 个警告`,
+      durationMs: 4000,
+    })
+  }
+}
 
 async function onSave(): Promise<void> {
   if (!project.currentProject || saving.value) return
@@ -213,5 +231,7 @@ function onExit(): void {
   cursor: pointer; font-size: 12px;
 }
 .action-btn + .action-btn { background: #4a5160; margin-left: 6px; }
+.validate-btn { background: #3a6e45; }
+.validate-btn:hover { background: #468352; }
 .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
