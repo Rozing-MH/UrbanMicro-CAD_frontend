@@ -168,6 +168,18 @@
           </li>
         </ul>
         <p v-else class="no-connectors">暂无转向限制</p>
+
+        <h4 class="sub-title">人行横道</h4>
+        <div class="crosswalk-grid">
+          <label v-for="pos in crosswalkPositions" :key="pos" class="crosswalk-item">
+            <input
+              type="checkbox"
+              :checked="isCrosswalkActive(pos)"
+              @change="onCrosswalkToggle(pos, $event)"
+            />
+            {{ crosswalkPositionLabel(pos) }}
+          </label>
+        </div>
       </section>
 
       <section v-else-if="selectedLight" class="prop-group">
@@ -187,8 +199,10 @@ import { historyStack, type HistorySessionId } from '@/commands/HistoryStack'
 import {
   DeleteSegmentCommand,
   RemoveLaneConnectorCommand,
+  SetCrosswalkCommand,
   SetLaneArrowCommand,
   SetLaneRestrictionCommand,
+  SetNodeControlModeCommand,
   SetTurnRestrictionCommand,
   UpdateNodeCommand,
   UpdateSegmentCommand,
@@ -198,7 +212,7 @@ import { buildSegmentGeometry } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
 import TrafficLightEditor from '@/components/panels/TrafficLightEditor.vue'
 import type { ElevationMode, Lane, LaneArrow, LaneDirection, RoadSegment, TurnDirection } from '@/types/road-network'
-import type { LaneRestriction, MarkingType, TurnRestriction } from '@/types/traffic-rule'
+import type { Crosswalk, LaneRestriction, MarkingType, TurnRestriction } from '@/types/traffic-rule'
 
 const editor = useEditorStateStore()
 const road = useRoadNetworkStore()
@@ -462,7 +476,33 @@ function onNodeElevationChange(ev: Event): void {
 function onControlModeChange(ev: Event): void {
   if (!selectedNode.value) return
   const controlMode = (ev.target as HTMLSelectElement).value as 'NONE' | 'YIELD' | 'TRAFFIC_LIGHT' | 'ROUNDABOUT'
-  void executePanelCommand(new UpdateNodeCommand(selectedNode.value.id, { controlMode }))
+  void executePanelCommand(new SetNodeControlModeCommand(selectedNode.value.id, controlMode))
+}
+
+const crosswalkPositions: Crosswalk['position'][] = ['NORTH', 'SOUTH', 'EAST', 'WEST']
+
+function crosswalkPositionLabel(pos: Crosswalk['position']): string {
+  const labels: Record<Crosswalk['position'], string> = { NORTH: '北', SOUTH: '南', EAST: '东', WEST: '西' }
+  return labels[pos]
+}
+
+function isCrosswalkActive(pos: Crosswalk['position']): boolean {
+  if (!selectedNode.value) return false
+  const cwId = `${selectedNode.value.id}:cw:${pos}`
+  const cw = rules.crosswalks.get(cwId)
+  return cw?.isActive ?? false
+}
+
+function onCrosswalkToggle(pos: Crosswalk['position'], ev: Event): void {
+  if (!selectedNode.value) return
+  const isActive = (ev.target as HTMLInputElement).checked
+  const cwId = `${selectedNode.value.id}:cw:${pos}`
+  void executePanelCommand(new SetCrosswalkCommand({
+    id: cwId,
+    nodeId: selectedNode.value.id,
+    position: pos,
+    isActive,
+  }))
 }
 </script>
 
@@ -535,4 +575,6 @@ function onControlModeChange(ev: Event): void {
 .arrow-list { list-style: none; padding: 0; margin: 0; }
 .arrow-row { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; font-size: 11px; border-bottom: 1px dashed #2a2f3a; gap: 6px; }
 .arrow-dirs { flex: 1; color: #d8dde6; }
+.crosswalk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.crosswalk-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #aab2bf; cursor: pointer; }
 </style>

@@ -7,7 +7,7 @@ import type {
   RoadNode,
   RoadSegment,
 } from '@/types/road-network'
-import type { LaneConnector, LaneRestriction, SignalStep, TrafficLightController, TurnRestriction } from '@/types/traffic-rule'
+import type { Crosswalk, LaneConnector, LaneRestriction, SignalStep, TrafficLightController, TurnRestriction } from '@/types/traffic-rule'
 
 function turnRestrictionKey(tr: TurnRestriction): string {
   return `${tr.nodeId}:${tr.fromSegmentId}:${tr.toSegmentId}:${tr.restriction}`
@@ -647,5 +647,123 @@ export class MoveNodeCommand implements ICommand {
 
   getDescription(): string {
     return `Move node ${this.nodeId}`
+  }
+}
+
+type NodeControlMode = RoadNode['controlMode']
+
+export class SetNodeControlModeCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private beforeMode: NodeControlMode | null = null
+  private beforeLight: TrafficLightController | null = null
+  private beforeSelectedLightId: string | null = null
+  private createdLightId: string | null = null
+
+  constructor(
+    private nodeId: string,
+    private newMode: NodeControlMode,
+  ) {}
+
+  execute(): void {
+    const road = useRoadNetworkStore()
+    const rules = useTrafficRuleStore()
+    const node = road.getNode(this.nodeId)
+    if (!node) throw new Error('无法切换控制模式：目标节点不存在')
+
+    if (this.beforeMode === null) {
+      this.beforeMode = node.controlMode
+      this.beforeSelectedLightId = rules.selectedLightId
+      const existingLight = Array.from(rules.trafficLights.values()).find((l) => l.nodeId === this.nodeId)
+      this.beforeLight = existingLight ? cloneTrafficLight(existingLight) : null
+    }
+
+    road.updateNode(this.nodeId, { controlMode: this.newMode })
+
+    if (this.newMode === 'TRAFFIC_LIGHT' && !this.beforeLight) {
+      const lightId = `light:${this.nodeId}:${Date.now()}`
+      const defaultLight: TrafficLightController = {
+        id: lightId,
+        nodeId: this.nodeId,
+        strategy: 'FIXED',
+        steps: [{
+          id: `${lightId}:step:0`,
+          greenLanes: [],
+          minGreenTime: 10,
+          maxGreenTime: 30,
+          yellowTime: 3,
+          allRedTime: 1,
+          sensorBindings: [],
+        }],
+        sensors: [],
+        currentStepIndex: 0,
+        timeInCurrentStep: 0,
+      }
+      rules.addTrafficLight(cloneTrafficLight(defaultLight))
+      rules.selectLight(lightId)
+      this.createdLightId = lightId
+    }
+
+    if (this.newMode !== 'TRAFFIC_LIGHT' && this.beforeLight) {
+      rules.removeTrafficLight(this.beforeLight.id)
+      if (rules.selectedLightId === this.beforeLight.id) rules.selectLight(null)
+    }
+  }
+
+  undo(): void {
+    if (this.beforeMode === null) return
+    const road = useRoadNetworkStore()
+    const rules = useTrafficRuleStore()
+
+    road.updateNode(this.nodeId, { controlMode: this.beforeMode })
+
+    if (this.createdLightId && this.newMode === 'TRAFFIC_LIGHT') {
+      rules.removeTrafficLight(this.createdLightId)
+      if (rules.selectedLightId === this.createdLightId) rules.selectLight(null)
+    }
+
+    if (this.beforeLight) {
+      rules.addTrafficLight(cloneTrafficLight(this.beforeLight))
+    } else if (this.newMode !== 'TRAFFIC_LIGHT') {
+      // no light to restore
+    }
+
+    rules.selectLight(this.beforeSelectedLightId)
+  }
+
+  getDescription(): string {
+    return `Set node ${this.nodeId} control mode to ${this.newMode}`
+  }
+}
+
+export class SetCrosswalkCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private beforeCrosswalk: Crosswalk | null | undefined
+
+  constructor(private crosswalk: Crosswalk) {}
+
+  execute(): void {
+    const rules = useTrafficRuleStore()
+    if (this.beforeCrosswalk === undefined) {
+      const existing = rules.crosswalks.get(this.crosswalk.id)
+      this.beforeCrosswalk = existing ? { ...existing } : null
+    }
+    if (this.crosswalk.isActive) {
+      rules.addCrosswalk({ ...this.crosswalk })
+    } else {
+      rules.removeCrosswalk(this.crosswalk.id)
+    }
+  }
+
+  undo(): void {
+    const rules = useTrafficRuleStore()
+    if (this.beforeCrosswalk) {
+      rules.addCrosswalk({ ...this.beforeCrosswalk })
+      return
+    }
+    rules.removeCrosswalk(this.crosswalk.id)
+  }
+
+  getDescription(): string {
+    return `Set crosswalk ${this.crosswalk.id} active=${this.crosswalk.isActive}`
   }
 }
