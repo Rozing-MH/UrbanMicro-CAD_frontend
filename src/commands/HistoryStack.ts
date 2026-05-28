@@ -2,39 +2,92 @@ import type { ICommand } from '@/types/commands'
 
 const MAX_HISTORY = 50
 
+export type HistorySessionId = number
+
+type HistoryChangeCallback = (pointer: number, length: number) => void
+type HistoryMutationCallback = () => void
+
+type HistoryOperation = (generation: number) => void
+
 export class HistoryStack {
   private stack: ICommand[] = []
   private pointer = -1
-  private onChange?: (pointer: number, length: number) => void
+  private onChange?: HistoryChangeCallback
+  private onMutation?: HistoryMutationCallback
+  private operationChain: Promise<void> = Promise.resolve()
+  private generation = 0
+  private activeSessionId: HistorySessionId | null = null
+  private nextSessionId = 1
 
-  setOnChange(cb: (pointer: number, length: number) => void): void {
+  setOnChange(cb?: HistoryChangeCallback): void {
     this.onChange = cb
   }
 
-  async execute(command: ICommand): Promise<void> {
-    await command.execute()
-    this.stack.splice(this.pointer + 1)
-    this.stack.push(command)
-    if (this.stack.length > MAX_HISTORY) {
-      this.stack.shift()
+  setOnMutation(cb?: HistoryMutationCallback): void {
+    this.onMutation = cb
+  }
+
+  clearCallbacks(): void {
+    this.onChange = undefined
+    this.onMutation = undefined
+  }
+
+  startSession(): HistorySessionId {
+    const sessionId = this.nextSessionId
+    this.nextSessionId++
+    this.activeSessionId = sessionId
+    return sessionId
+  }
+
+  endSession(sessionId: HistorySessionId): void {
+    if (this.activeSessionId === sessionId) {
+      this.activeSessionId = null
+      this.generation++
     }
-    this.pointer = this.stack.length - 1
-    this.notify()
   }
 
-  async undo(): Promise<void> {
-    if (this.pointer < 0) return
-    await this.stack[this.pointer].undo()
-    this.pointer--
-    this.notify()
+  isSessionActive(sessionId: HistorySessionId): boolean {
+    return this.activeSessionId === sessionId
   }
 
-  async redo(): Promise<void> {
-    if (this.pointer >= this.stack.length - 1) return
-    const nextPointer = this.pointer + 1
-    await this.stack[nextPointer].execute()
-    this.pointer = nextPointer
-    this.notify()
+  execute(command: ICommand, sessionId: HistorySessionId): Promise<void> {
+    return this.enqueue(sessionId, (generation) => {
+      command.execute()
+      if (generation !== this.generation) return
+      this.stack.splice(this.pointer + 1)
+      this.stack.push(command)
+      if (this.stack.length > MAX_HISTORY) {
+        this.stack.shift()
+      }
+      this.pointer = this.stack.length - 1
+      this.notify()
+      this.notifyMutation()
+    })
+  }
+
+  undo(sessionId: HistorySessionId): Promise<void> {
+    return this.enqueue(sessionId, (generation) => {
+      if (this.pointer < 0) return
+      const command = this.stack[this.pointer]
+      command.undo()
+      if (generation !== this.generation) return
+      this.pointer--
+      this.notify()
+      this.notifyMutation()
+    })
+  }
+
+  redo(sessionId: HistorySessionId): Promise<void> {
+    return this.enqueue(sessionId, (generation) => {
+      if (this.pointer >= this.stack.length - 1) return
+      const nextPointer = this.pointer + 1
+      const command = this.stack[nextPointer]
+      command.execute()
+      if (generation !== this.generation) return
+      this.pointer = nextPointer
+      this.notify()
+      this.notifyMutation()
+    })
   }
 
   canUndo(): boolean {
@@ -46,6 +99,7 @@ export class HistoryStack {
   }
 
   clear(): void {
+    this.generation++
     this.stack = []
     this.pointer = -1
     this.notify()
@@ -56,8 +110,26 @@ export class HistoryStack {
     return this.stack[this.pointer].getDescription()
   }
 
+  private enqueue(
+    sessionId: HistorySessionId,
+    operation: HistoryOperation,
+  ): Promise<void> {
+    const generation = this.generation
+    const run = (): void => {
+      if (!this.isSessionActive(sessionId) || generation !== this.generation) return
+      operation(generation)
+    }
+    const result = this.operationChain.then(run, run)
+    this.operationChain = result.catch(() => undefined)
+    return result
+  }
+
   private notify(): void {
     this.onChange?.(this.pointer, this.stack.length)
+  }
+
+  private notifyMutation(): void {
+    this.onMutation?.()
   }
 }
 

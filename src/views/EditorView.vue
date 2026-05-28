@@ -47,6 +47,7 @@ import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { projectApi } from '@/api/projectApi'
+import { historyStack } from '@/commands/HistoryStack'
 import { disposeWorkers } from '@/workers'
 
 const route = useRoute()
@@ -59,8 +60,32 @@ const sim = useSimulationStore()
 
 const loading = ref(true)
 const loadError = ref('')
+let isEditorUnmounted = false
+
+function resetHistoryState(): void {
+  historyStack.clear()
+  editor.updateHistoryState(-1, 0)
+}
+
+function clearHistorySession(): void {
+  const sessionId = editor.historySessionId
+  if (sessionId !== null) historyStack.endSession(sessionId)
+  editor.setHistorySession(null)
+}
 
 onMounted(async () => {
+  isEditorUnmounted = false
+  clearHistorySession()
+  resetHistoryState()
+  const sessionId = historyStack.startSession()
+  editor.setHistorySession(sessionId)
+  historyStack.setOnChange((pointer, length) => editor.updateHistoryState(pointer, length))
+  historyStack.setOnMutation(() => {
+    if (!loading.value && project.currentProject) {
+      project.markDirty()
+    }
+  })
+
   const id = route.params.projectId as string
   if (!id) {
     loadError.value = '缺少项目 ID'
@@ -69,14 +94,16 @@ onMounted(async () => {
   }
   try {
     const snapshot = await projectApi.get(id)
+    if (isEditorUnmounted) return
     project.setCurrentProject(snapshot.meta)
     road.deserialize(snapshot.topology)
     rules.deserialize(snapshot.rules)
     sim.setODMatrix(snapshot.odMatrix)
   } catch (err) {
+    if (isEditorUnmounted) return
     loadError.value = err instanceof Error ? err.message : '加载失败'
   } finally {
-    loading.value = false
+    if (!isEditorUnmounted) loading.value = false
   }
 })
 
@@ -91,12 +118,16 @@ onBeforeRouteLeave((_to, _from, next) => {
 })
 
 onBeforeUnmount(() => {
+  isEditorUnmounted = true
   editor.dismissNotification()
   disposeWorkers()
   road.clear()
   rules.clear()
   sim.reset()
   project.setCurrentProject(null)
+  clearHistorySession()
+  resetHistoryState()
+  historyStack.clearCallbacks()
 })
 
 function notificationLabel(type: NotificationType): string {

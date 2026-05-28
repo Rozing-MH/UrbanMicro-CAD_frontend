@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { ref, onMounted, onBeforeUnmount, type Ref } from 'vue'
+import { shallowRef, onMounted, onBeforeUnmount, type Ref } from 'vue'
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
@@ -14,7 +14,7 @@ export interface RendererState {
 }
 
 export function useThreeRenderer(container: Ref<HTMLElement | null>) {
-  const state = ref<RendererState | null>(null)
+  const state = shallowRef<RendererState | null>(null)
   let resizeObserver: ResizeObserver | null = null
 
   function init(): RendererState {

@@ -169,7 +169,7 @@ import { computed } from 'vue'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
-import { historyStack } from '@/commands/HistoryStack'
+import { historyStack, type HistorySessionId } from '@/commands/HistoryStack'
 import {
   DeleteSegmentCommand,
   SetLaneRestrictionCommand,
@@ -224,9 +224,17 @@ function directionLabel(d: LaneDirection): string {
   return d === 'FORWARD' ? '→' : d === 'BACKWARD' ? '←' : '↔'
 }
 
-async function executePanelCommand(command: Parameters<typeof historyStack.execute>[0]): Promise<void> {
+function isCurrentHistorySession(sessionId: HistorySessionId): boolean {
+  return editor.historySessionId === sessionId && historyStack.isSessionActive(sessionId)
+}
+
+async function executePanelCommand(
+  command: Parameters<typeof historyStack.execute>[0],
+  sessionId = editor.historySessionId,
+): Promise<void> {
+  if (sessionId === null || !isCurrentHistorySession(sessionId)) return
   try {
-    await historyStack.execute(command)
+    await historyStack.execute(command, sessionId)
   } catch (err) {
     editor.showNotification({
       type: 'error',
@@ -325,15 +333,17 @@ function onElevationEndChange(ev: Event): void {
 }
 
 async function applyActiveProfile(): Promise<void> {
-  if (!selectedSegment.value) return
+  const sessionId = editor.historySessionId
+  if (sessionId === null || !selectedSegment.value) return
   const segment = selectedSegment.value
   const profile = getProfileById(editor.activeProfileId)
   let command: UpgradeSegmentCommand | null = null
 
   try {
     const meshData = await buildSegmentGeometry(segment.centerLine, profile, segment.elevation.startZ)
+    if (!isCurrentHistorySession(sessionId)) return
     command = new UpgradeSegmentCommand(segment.id, profile, meshData)
-    await historyStack.execute(command)
+    await executePanelCommand(command, sessionId)
   } catch {
     editor.showNotification({
       type: command?.conflictMessage ? 'warning' : 'error',
@@ -348,7 +358,7 @@ async function applyActiveProfile(): Promise<void> {
 async function deleteSelected(): Promise<void> {
   if (!selectedSegment.value) return
   if (!confirm('确认删除选中的路段？')) return
-  await historyStack.execute(new DeleteSegmentCommand(selectedSegment.value.id))
+  await executePanelCommand(new DeleteSegmentCommand(selectedSegment.value.id))
 }
 
 function onNodeElevationChange(ev: Event): void {

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import type { HistorySessionId } from '@/commands/HistoryStack'
 
 export type ToolMode =
   | 'SELECT'
@@ -68,6 +69,7 @@ export const useEditorStateStore = defineStore('editorState', () => {
 
   const historyPointer = ref(-1)
   const historyLength = ref(0)
+  const historySessionId = ref<HistorySessionId | null>(null)
   const canUndo = computed(() => historyPointer.value >= 0)
   const canRedo = computed(() => historyPointer.value < historyLength.value - 1)
   const errorMessage = computed(() => notification.value?.type === 'error' ? notification.value.message : null)
@@ -162,16 +164,20 @@ export const useEditorStateStore = defineStore('editorState', () => {
     historyLength.value = length
   }
 
+  function setHistorySession(sessionId: HistorySessionId | null): void {
+    historySessionId.value = sessionId
+  }
+
   return {
     activeTool, viewMode, cameraPosition, cameraTarget, zoomLevel,
     panelState, isLoading, loadingMessage, notification, errorMessage,
     snapToGrid, snapToRoad, gridSize, showGrid, showMeasurements, showNodeIds,
     continuousDrawing, activeProfileId, renderLOD,
-    historyPointer, historyLength, canUndo, canRedo,
+    historyPointer, historyLength, historySessionId, canUndo, canRedo,
     setActiveTool, setViewMode, updateCamera, setZoom, setPanelState,
     setLoading, showNotification, dismissNotification, setError, clearError,
     toggleSnap, setGridSize, setActiveProfile,
     toggleContinuousDrawing, toggleGrid,
-    updateHistoryState,
+    updateHistoryState, setHistorySession,
   }
 })

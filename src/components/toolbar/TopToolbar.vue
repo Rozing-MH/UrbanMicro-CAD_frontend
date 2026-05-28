@@ -108,11 +108,23 @@ const viewModes: ViewModeDef[] = [
 ]
 
 async function onUndo(): Promise<void> {
-  await historyStack.undo()
+  const sessionId = editor.historySessionId
+  if (sessionId === null) return
+  try {
+    await historyStack.undo(sessionId)
+  } catch (err) {
+    editor.setError(err instanceof Error ? err.message : '撤销失败')
+  }
 }
 
 async function onRedo(): Promise<void> {
-  await historyStack.redo()
+  const sessionId = editor.historySessionId
+  if (sessionId === null) return
+  try {
+    await historyStack.redo(sessionId)
+  } catch (err) {
+    editor.setError(err instanceof Error ? err.message : '重做失败')
+  }
 }
 
 const topology = computed(() => ({

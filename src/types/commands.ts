@@ -1,6 +1,6 @@
 export interface ICommand {
-  execute(): void | Promise<void>
-  undo(): void | Promise<void>
+  execute(): void
+  undo(): void
   getDescription(): string
   readonly timestamp: number
 }

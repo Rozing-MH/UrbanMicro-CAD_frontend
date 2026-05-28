@@ -24,7 +24,7 @@ import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
-import { historyStack } from '@/commands/HistoryStack'
+import { historyStack, type HistorySessionId } from '@/commands/HistoryStack'
 import {
   AddSegmentCommand,
   AddTrafficLightCommand,
@@ -87,6 +87,18 @@ const groundGrid = useGroundGrid(sceneRef)
 
 function genId(): string {
   return Math.random().toString(36).slice(2, 11) + Date.now().toString(36)
+}
+
+function isCurrentHistorySession(sessionId: HistorySessionId): boolean {
+  return editorStore.historySessionId === sessionId && historyStack.isSessionActive(sessionId)
+}
+
+async function executeHistoryCommand(
+  command: Parameters<typeof historyStack.execute>[0],
+  sessionId: HistorySessionId,
+): Promise<void> {
+  if (!isCurrentHistorySession(sessionId)) return
+  await historyStack.execute(command, sessionId)
 }
 
 const hint = computed(() => {
@@ -231,7 +243,7 @@ function findOrCreateNode(point: Point2D): { id: string; created: boolean; node:
   }
 }
 
-async function handleRoadDraw(point: Point2D): Promise<void> {
+async function handleRoadDraw(point: Point2D, sessionId: HistorySessionId): Promise<void> {
   const ctx = roadStore.drawingContext
   if (ctx.state === 'IDLE') {
     const found = findOrCreateNode(point)
@@ -266,8 +278,10 @@ async function handleRoadDraw(point: Point2D): Promise<void> {
       isCurved: false,
       meshData: await buildRoadMesh(centerLine, profile, elevation.startZ),
     })
+    if (!isCurrentHistorySession(sessionId)) return
     const cmd = new AddSegmentCommand(segment, startNode, found.node, false, found.created)
-    await historyStack.execute(cmd)
+    await executeHistoryCommand(cmd, sessionId)
+    if (!isCurrentHistorySession(sessionId)) return
     roadRenderer.addSegment(segment)
     clearPreview()
     if (editorStore.continuousDrawing) {
@@ -307,14 +321,14 @@ function handleSelect(event: MouseEvent): void {
   else roadStore.clearSelection()
 }
 
-async function handleBulldozer(event: MouseEvent): Promise<void> {
+async function handleBulldozer(event: MouseEvent, sessionId: HistorySessionId): Promise<void> {
   const picked = pickSceneObject(event)
   if (!picked?.segmentId) return
-  await historyStack.execute(new DeleteSegmentCommand(picked.segmentId))
+  await executeHistoryCommand(new DeleteSegmentCommand(picked.segmentId), sessionId)
   syncRendererWithStore()
 }
 
-async function handleRoadUpgrade(event: MouseEvent): Promise<void> {
+async function handleRoadUpgrade(event: MouseEvent, sessionId: HistorySessionId): Promise<void> {
   const picked = pickSceneObject(event)
   if (!picked?.segmentId) return
   const segment = roadStore.getSegment(picked.segmentId)
@@ -324,8 +338,10 @@ async function handleRoadUpgrade(event: MouseEvent): Promise<void> {
 
   try {
     const meshData = await buildRoadMesh(segment.centerLine, profile, segment.elevation.startZ)
+    if (!isCurrentHistorySession(sessionId)) return
     command = new UpgradeSegmentCommand(segment.id, profile, meshData)
-    await historyStack.execute(command)
+    await executeHistoryCommand(command, sessionId)
+    if (!isCurrentHistorySession(sessionId)) return
   } catch {
     editorStore.showNotification({
       type: command?.conflictMessage ? 'warning' : 'error',
@@ -339,7 +355,7 @@ async function handleRoadUpgrade(event: MouseEvent): Promise<void> {
   editorStore.clearError()
 }
 
-async function handleParallelRoad(event: MouseEvent): Promise<void> {
+async function handleParallelRoad(event: MouseEvent, sessionId: HistorySessionId): Promise<void> {
   const picked = pickSceneObject(event)
   if (!picked?.segmentId) return
   const profile = getProfileById(editorStore.activeProfileId)
@@ -353,22 +369,24 @@ async function handleParallelRoad(event: MouseEvent): Promise<void> {
   })
   if (!draft) return
   draft.segment.meshData = await buildRoadMesh(draft.segment.centerLine, profile, draft.segment.elevation.startZ)
-  await historyStack.execute(new CreateParallelSegmentCommand(
+  if (!isCurrentHistorySession(sessionId)) return
+  await executeHistoryCommand(new CreateParallelSegmentCommand(
     draft.segment,
     draft.startNode,
     draft.endNode,
     true,
     true,
-  ))
+  ), sessionId)
+  if (!isCurrentHistorySession(sessionId)) return
   roadStore.selectSegment(draft.segment.id)
   syncRendererWithStore()
 }
 
-async function handleTrafficLight(event: MouseEvent): Promise<void> {
+async function handleTrafficLight(event: MouseEvent, sessionId: HistorySessionId): Promise<void> {
   const picked = pickSceneObject(event)
   if (!picked?.nodeId) return
   const id = `tl_${picked.nodeId}`
-  await historyStack.execute(new AddTrafficLightCommand({
+  await executeHistoryCommand(new AddTrafficLightCommand({
     id,
     nodeId: picked.nodeId,
     strategy: 'FIXED',
@@ -386,20 +404,22 @@ async function handleTrafficLight(event: MouseEvent): Promise<void> {
     sensors: [],
     currentStepIndex: 0,
     timeInCurrentStep: 0,
-  }))
+  }), sessionId)
 }
 
 async function onPointerDown(event: MouseEvent): Promise<void> {
   if (event.button !== 0) return
+  const sessionId = editorStore.historySessionId
+  if (sessionId === null) return
   const world = screenToWorld(event)
   if (!world) return
   const snapped = snapPoint(world)
-  if (editorStore.activeTool === 'ROAD_DRAW') await handleRoadDraw(snapped)
+  if (editorStore.activeTool === 'ROAD_DRAW') await handleRoadDraw(snapped, sessionId)
   else if (editorStore.activeTool === 'SELECT') handleSelect(event)
-  else if (editorStore.activeTool === 'ROAD_UPGRADE') await handleRoadUpgrade(event)
-  else if (editorStore.activeTool === 'PARALLEL_ROAD') await handleParallelRoad(event)
-  else if (editorStore.activeTool === 'BULLDOZER') await handleBulldozer(event)
-  else if (editorStore.activeTool === 'TRAFFIC_LIGHT') await handleTrafficLight(event)
+  else if (editorStore.activeTool === 'ROAD_UPGRADE') await handleRoadUpgrade(event, sessionId)
+  else if (editorStore.activeTool === 'PARALLEL_ROAD') await handleParallelRoad(event, sessionId)
+  else if (editorStore.activeTool === 'BULLDOZER') await handleBulldozer(event, sessionId)
+  else if (editorStore.activeTool === 'TRAFFIC_LIGHT') await handleTrafficLight(event, sessionId)
 }
 
 function syncRendererWithStore(): void {
@@ -425,13 +445,21 @@ function onKeyDown(event: KeyboardEvent): void {
     clearPreview()
   } else if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
     event.preventDefault()
-    historyStack.undo()
+    const sessionId = editorStore.historySessionId
+    if (sessionId === null) return
+    void historyStack.undo(sessionId).catch((err: unknown) => {
+      editorStore.setError(err instanceof Error ? err.message : '撤销失败')
+    })
   } else if (
     (event.ctrlKey || event.metaKey) &&
     (event.key === 'y' || (event.shiftKey && event.key === 'Z'))
   ) {
     event.preventDefault()
-    historyStack.redo()
+    const sessionId = editorStore.historySessionId
+    if (sessionId === null) return
+    void historyStack.redo(sessionId).catch((err: unknown) => {
+      editorStore.setError(err instanceof Error ? err.message : '重做失败')
+    })
   }
 }
 
