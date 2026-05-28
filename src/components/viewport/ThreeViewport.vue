@@ -67,6 +67,7 @@ import {
   AddTrafficLightCommand,
   CreateParallelSegmentCommand,
   DeleteSegmentCommand,
+  MoveNodeCommand,
   SetLaneArrowCommand,
   SetLaneConnectorCommand,
   SetTurnRestrictionCommand,
@@ -204,6 +205,9 @@ interface LaneAnchor {
 
 let previewMesh: THREE.Line | null = null
 let simTickInFlight = false
+const isDragging = ref(false)
+const dragNodeId = ref<string | null>(null)
+const dragStartNodePos = ref<Point2D | null>(null)
 const selectedLaneAnchor = ref<LaneAnchor | null>(null)
 const laneAnchorMeshes: Map<string, THREE.Mesh> = new Map()
 const laneConnectorMeshes: Map<string, THREE.Line> = new Map()
@@ -299,6 +303,11 @@ function clearPreview(): void {
 function onPointerMove(event: MouseEvent): void {
   const world = screenToWorld(event)
   if (!world) return
+  if (isDragging.value && dragNodeId.value) {
+    roadStore.updateNode(dragNodeId.value, { position: { x: world.x, y: world.y } })
+    rebuildSegmentsForNode(dragNodeId.value)
+    return
+  }
   const snapped = snapPoint(world)
   if (editorStore.activeTool === 'ROAD_DRAW' && roadStore.drawingContext.state === 'DRAWING') {
     roadStore.updatePreview(snapped)
@@ -406,6 +415,60 @@ function handleSelect(event: MouseEvent): void {
   if (picked?.segmentId) roadStore.selectSegment(picked.segmentId)
   else if (picked?.nodeId) roadStore.selectNode(picked.nodeId)
   else roadStore.clearSelection()
+}
+
+function handleRoadEdit(event: MouseEvent): void {
+  const picked = pickSceneObject(event)
+  if (!picked?.nodeId) {
+    roadStore.clearSelection()
+    return
+  }
+  roadStore.selectNode(picked.nodeId)
+  const node = roadStore.getNode(picked.nodeId)
+  if (!node) return
+  isDragging.value = true
+  dragNodeId.value = picked.nodeId
+  dragStartNodePos.value = { x: node.position.x, y: node.position.y }
+  cameraControls.state.isDragging = false
+  cameraControls.state.isOrbiting = false
+}
+
+function rebuildSegmentsForNode(nodeId: string): void {
+  const node = roadStore.getNode(nodeId)
+  if (!node) return
+  const scene = sceneRef.value
+  if (!scene) return
+  const marker = roadRenderer.nodeMarkers.get(nodeId)
+  if (marker) {
+    marker.position.set(node.position.x, node.elevation + 0.1, node.position.y)
+  }
+  for (const segId of node.connectedSegmentIds) {
+    const seg = roadStore.getSegment(segId)
+    if (!seg) continue
+    roadRenderer.removeSegment(segId)
+    roadRenderer.addSegment(seg)
+  }
+}
+
+function onPointerUp(): void {
+  if (!isDragging.value) return
+  const nodeId = dragNodeId.value
+  const fromPos = dragStartNodePos.value
+  if (nodeId && fromPos) {
+    const node = roadStore.getNode(nodeId)
+    if (node && (node.position.x !== fromPos.x || node.position.y !== fromPos.y)) {
+      const from3d = { x: fromPos.x, y: fromPos.y, z: node.elevation }
+      const to3d = { x: node.position.x, y: node.position.y, z: node.elevation }
+      roadStore.updateNode(nodeId, { position: fromPos })
+      const sessionId = editorStore.historySessionId
+      if (sessionId !== null) {
+        void historyStack.execute(new MoveNodeCommand(nodeId, from3d, to3d), sessionId).catch(() => {})
+      }
+    }
+  }
+  isDragging.value = false
+  dragNodeId.value = null
+  dragStartNodePos.value = null
 }
 
 async function handleBulldozer(event: MouseEvent, sessionId: HistorySessionId): Promise<void> {
@@ -805,6 +868,7 @@ async function onPointerDown(event: MouseEvent): Promise<void> {
   else if (editorStore.activeTool === 'LANE_CONNECTOR') await handleLaneConnector(event, sessionId)
   else if (editorStore.activeTool === 'LANE_ARROW') handleLaneArrow(event, sessionId)
   else if (editorStore.activeTool === 'TURN_RESTRICTION') handleTurnRestriction(event, sessionId)
+  else if (editorStore.activeTool === 'ROAD_EDIT') handleRoadEdit(event)
 }
 
 function syncRendererWithStore(): void {
@@ -827,6 +891,13 @@ function onContextMenu(event: MouseEvent): void {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
+    if (isDragging.value && dragNodeId.value && dragStartNodePos.value) {
+      roadStore.updateNode(dragNodeId.value, { position: dragStartNodePos.value })
+      rebuildSegmentsForNode(dragNodeId.value)
+      isDragging.value = false
+      dragNodeId.value = null
+      dragStartNodePos.value = null
+    }
     roadStore.cancelDrawing()
     clearPreview()
     clearLaneConnectorState()
@@ -899,6 +970,7 @@ onMounted(() => {
   cameraControls.attach()
   containerRef.value?.addEventListener('pointermove', onPointerMove)
   containerRef.value?.addEventListener('pointerdown', onPointerDown)
+  containerRef.value?.addEventListener('pointerup', onPointerUp)
   containerRef.value?.addEventListener('contextmenu', onContextMenu)
   window.addEventListener('keydown', onKeyDown)
   syncRendererWithStore()
@@ -935,6 +1007,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   containerRef.value?.removeEventListener('pointermove', onPointerMove)
   containerRef.value?.removeEventListener('pointerdown', onPointerDown)
+  containerRef.value?.removeEventListener('pointerup', onPointerUp)
   containerRef.value?.removeEventListener('contextmenu', onContextMenu)
   window.removeEventListener('keydown', onKeyDown)
   clearLaneConnectorState()
