@@ -24,17 +24,19 @@ import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
+import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { historyStack, type HistorySessionId } from '@/commands/HistoryStack'
 import {
   AddSegmentCommand,
   AddTrafficLightCommand,
   CreateParallelSegmentCommand,
   DeleteSegmentCommand,
+  SetLaneConnectorCommand,
   UpgradeSegmentCommand,
 } from '@/commands/roadCommands'
 import { buildSegmentGeometry, createSegmentFromPoints } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
-import type { Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData } from '@/types'
+import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData } from '@/types'
 
 const DEFAULT_PROFILE: CrossSectionProfile = {
   id: 'default-2lane',
@@ -70,6 +72,7 @@ const roadStore = useRoadNetworkStore()
 const editorStore = useEditorStateStore()
 const simStore = useSimulationStore()
 const evaluationStore = useEvaluationStore()
+const trafficRuleStore = useTrafficRuleStore()
 
 // Pass containerRef at construction — renderer auto-inits via its own onMounted
 const renderer = useThreeRenderer(containerRef)
@@ -109,7 +112,7 @@ const hint = computed(() => {
     case 'BULLDOZER': return '点击路段删除，支持撤销/重做'
     case 'ROAD_EDIT': return '左键选择节点拖动调整'
     case 'TRAFFIC_LIGHT': return '点击交叉口添加信号灯'
-    case 'LANE_CONNECTOR': return '依次点击进入车道与目标车道'
+    case 'LANE_CONNECTOR': return selectedLaneAnchor.value ? '点击目标车道完成连接，Esc 取消' : '点击源车道锚点开始连接'
     case 'MEASURE': return '依次点击起点和终点测量距离'
     default: return ''
   }
@@ -149,8 +152,23 @@ function snapPoint(p: Point2D): Point2D {
   return { x: Math.round(p.x / grid) * grid, y: Math.round(p.y / grid) * grid }
 }
 
+interface LaneAnchor {
+  segmentId: string
+  laneId: string
+  laneIndex: number
+  point: Point2D
+  elevation: number
+}
+
 let previewMesh: THREE.Line | null = null
 let simTickInFlight = false
+const selectedLaneAnchor = ref<LaneAnchor | null>(null)
+const laneAnchorMeshes: Map<string, THREE.Mesh> = new Map()
+const laneConnectorMeshes: Map<string, THREE.Line> = new Map()
+const laneAnchorGeometry = new THREE.SphereGeometry(0.3, 8, 8)
+const laneAnchorMaterial = new THREE.MeshBasicMaterial({ color: 0x41c9ff })
+const selectedLaneAnchorMaterial = new THREE.MeshBasicMaterial({ color: 0xffd166 })
+const laneConnectorMaterial = new THREE.LineBasicMaterial({ color: 0xffb020 })
 
 function buildFallbackRoadMesh(centerLine: Point2D[], halfWidth: number, elevation: number): MeshData {
   const start = centerLine[0]
@@ -382,6 +400,148 @@ async function handleParallelRoad(event: MouseEvent, sessionId: HistorySessionId
   syncRendererWithStore()
 }
 
+function getLaneAnchorPositions(segmentId: string): LaneAnchor[] {
+  const segment = roadStore.getSegment(segmentId)
+  if (!segment) return []
+  const lanes = roadStore.getLanesBySegment(segmentId)
+  if (lanes.length === 0) return []
+  const centerLine = segment.centerLine
+  const start = centerLine[0]
+  const end = centerLine[centerLine.length - 1]
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const len = Math.hypot(dx, dy) || 1
+  const nx = -dy / len
+  const ny = dx / len
+  const midX = (start.x + end.x) / 2
+  const midY = (start.y + end.y) / 2
+  const elevation = segment.elevation.startZ
+  const anchors: LaneAnchor[] = []
+  let offset = -segment.profile.totalWidth / 2
+  for (const lane of lanes) {
+    offset += lane.width / 2
+    anchors.push({
+      segmentId,
+      laneId: lane.id,
+      laneIndex: lane.index,
+      point: { x: midX + nx * offset, y: midY + ny * offset },
+      elevation,
+    })
+    offset += lane.width / 2
+  }
+  return anchors
+}
+
+function updateLaneAnchorMeshes(): void {
+  const scene = sceneRef.value
+  if (!scene) return
+  const isConnectorTool = editorStore.activeTool === 'LANE_CONNECTOR'
+  const activeSegmentId = roadStore.selectedSegmentIds.values().next().value as string | undefined
+  for (const [key, mesh] of laneAnchorMeshes) {
+    scene.remove(mesh)
+    laneAnchorMeshes.delete(key)
+  }
+  if (!isConnectorTool || !activeSegmentId) return
+  const anchors = getLaneAnchorPositions(activeSegmentId)
+  for (const anchor of anchors) {
+    const isSelected = selectedLaneAnchor.value?.laneId === anchor.laneId
+    const mat = isSelected ? selectedLaneAnchorMaterial : laneAnchorMaterial
+    const mesh = new THREE.Mesh(laneAnchorGeometry, mat)
+    mesh.position.set(anchor.point.x, anchor.elevation + 0.5, anchor.point.y)
+    mesh.userData.laneAnchor = anchor
+    scene.add(mesh)
+    laneAnchorMeshes.set(anchor.laneId, mesh)
+  }
+}
+
+function updateLaneConnectorMeshes(): void {
+  const scene = sceneRef.value
+  if (!scene) return
+  for (const [id, line] of laneConnectorMeshes) {
+    scene.remove(line)
+    line.geometry.dispose()
+    laneConnectorMeshes.delete(id)
+  }
+  for (const connector of trafficRuleStore.laneConnectors.values()) {
+    const fromLane = roadStore.lanes.get(connector.fromLaneId)
+    if (!fromLane) continue
+    const geom = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(connector.fromAnchor.x, 0.15, connector.fromAnchor.y),
+      new THREE.Vector3(connector.toAnchor.x, 0.15, connector.toAnchor.y),
+    ])
+    const line = new THREE.Line(geom, laneConnectorMaterial)
+    line.userData.connectorId = connector.id
+    scene.add(line)
+    laneConnectorMeshes.set(connector.id, line)
+  }
+}
+
+function clearLaneConnectorState(): void {
+  selectedLaneAnchor.value = null
+  const scene = sceneRef.value
+  if (scene) {
+    for (const [, mesh] of laneAnchorMeshes) {
+      scene.remove(mesh)
+    }
+  }
+  laneAnchorMeshes.clear()
+}
+
+function pickLaneAnchor(event: MouseEvent): LaneAnchor | null {
+  const camera = cameraRef.value
+  if (!camera || !containerRef.value) return null
+  const rect = containerRef.value.getBoundingClientRect()
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+  raycaster.setFromCamera(pointer, camera)
+  const anchors = Array.from(laneAnchorMeshes.values())
+  if (anchors.length === 0) return null
+  const intersects = raycaster.intersectObjects(anchors, false)
+  if (intersects.length > 0) {
+    return intersects[0].object.userData.laneAnchor as LaneAnchor
+  }
+  return null
+}
+
+async function handleLaneConnector(event: MouseEvent, sessionId: HistorySessionId): Promise<void> {
+  const anchor = pickLaneAnchor(event)
+  if (!anchor) {
+    const picked = pickSceneObject(event)
+    if (picked?.segmentId) {
+      roadStore.selectSegment(picked.segmentId)
+      updateLaneAnchorMeshes()
+    }
+    return
+  }
+  if (!selectedLaneAnchor.value) {
+    selectedLaneAnchor.value = anchor
+    updateLaneAnchorMeshes()
+    return
+  }
+  if (selectedLaneAnchor.value.laneId === anchor.laneId) return
+  const from = selectedLaneAnchor.value
+  const isDuplicate = Array.from(trafficRuleStore.laneConnectors.values()).some(
+    (c) => c.fromLaneId === from.laneId && c.toLaneId === anchor.laneId,
+  )
+  if (isDuplicate) {
+    editorStore.showNotification({ type: 'warning', message: '该车道连接已存在' })
+    selectedLaneAnchor.value = null
+    updateLaneAnchorMeshes()
+    return
+  }
+  const connector: LaneConnector = {
+    id: `lc_${from.laneId}_${anchor.laneId}`,
+    fromLaneId: from.laneId,
+    toLaneId: anchor.laneId,
+    fromAnchor: { x: from.point.x, y: from.point.y },
+    toAnchor: { x: anchor.point.x, y: anchor.point.y },
+  }
+  await executeHistoryCommand(new SetLaneConnectorCommand(connector), sessionId)
+  selectedLaneAnchor.value = null
+  updateLaneAnchorMeshes()
+  updateLaneConnectorMeshes()
+}
+
 async function handleTrafficLight(event: MouseEvent, sessionId: HistorySessionId): Promise<void> {
   const picked = pickSceneObject(event)
   if (!picked?.nodeId) return
@@ -420,6 +580,7 @@ async function onPointerDown(event: MouseEvent): Promise<void> {
   else if (editorStore.activeTool === 'PARALLEL_ROAD') await handleParallelRoad(event, sessionId)
   else if (editorStore.activeTool === 'BULLDOZER') await handleBulldozer(event, sessionId)
   else if (editorStore.activeTool === 'TRAFFIC_LIGHT') await handleTrafficLight(event, sessionId)
+  else if (editorStore.activeTool === 'LANE_CONNECTOR') await handleLaneConnector(event, sessionId)
 }
 
 function syncRendererWithStore(): void {
@@ -437,12 +598,14 @@ function onContextMenu(event: MouseEvent): void {
   event.preventDefault()
   roadStore.cancelDrawing()
   clearPreview()
+  clearLaneConnectorState()
 }
 
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     roadStore.cancelDrawing()
     clearPreview()
+    clearLaneConnectorState()
   } else if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
     event.preventDefault()
     const sessionId = editorStore.historySessionId
@@ -487,6 +650,19 @@ watch(
 watch(
   () => roadStore.topologyVersion,
   () => syncRendererWithStore(),
+)
+
+watch(
+  () => [editorStore.activeTool, roadStore.selectedSegmentIds.size],
+  () => {
+    if (editorStore.activeTool !== 'LANE_CONNECTOR') clearLaneConnectorState()
+    updateLaneAnchorMeshes()
+  },
+)
+
+watch(
+  () => trafficRuleStore.ruleVersion,
+  () => updateLaneConnectorMeshes(),
 )
 
 onMounted(() => {
@@ -534,6 +710,19 @@ onBeforeUnmount(() => {
   containerRef.value?.removeEventListener('pointerdown', onPointerDown)
   containerRef.value?.removeEventListener('contextmenu', onContextMenu)
   window.removeEventListener('keydown', onKeyDown)
+  clearLaneConnectorState()
+  const scene = sceneRef.value
+  if (scene) {
+    for (const [, line] of laneConnectorMeshes) {
+      scene.remove(line)
+      line.geometry.dispose()
+    }
+    laneConnectorMeshes.clear()
+  }
+  laneAnchorGeometry.dispose()
+  laneAnchorMaterial.dispose()
+  selectedLaneAnchorMaterial.dispose()
+  laneConnectorMaterial.dispose()
   cameraControls.detach()
   renderer.dispose()
 })

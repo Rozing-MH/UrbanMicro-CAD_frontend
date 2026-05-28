@@ -321,6 +321,14 @@ function cloneLaneRestriction(restriction: LaneRestriction): LaneRestriction {
   }
 }
 
+function cloneLaneConnector(connector: LaneConnector): LaneConnector {
+  return {
+    ...connector,
+    fromAnchor: { ...connector.fromAnchor },
+    toAnchor: { ...connector.toAnchor },
+  }
+}
+
 function cloneTrafficLight(light: TrafficLightController): TrafficLightController {
   return {
     ...light,
@@ -359,6 +367,69 @@ export class SetLaneRestrictionCommand implements ICommand {
 
   getDescription(): string {
     return `Set lane restriction ${this.restriction.laneId}`
+  }
+}
+
+export class SetLaneConnectorCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private beforeConnector: LaneConnector | null | undefined
+  private duplicateConnectorId: string | null = null
+
+  constructor(private connector: LaneConnector) {}
+
+  execute(): void {
+    const rules = useTrafficRuleStore()
+    const duplicate = Array.from(rules.laneConnectors.values()).find(
+      (item) => item.fromLaneId === this.connector.fromLaneId && item.toLaneId === this.connector.toLaneId,
+    )
+    if (duplicate && duplicate.id !== this.connector.id) {
+      this.duplicateConnectorId = duplicate.id
+      return
+    }
+    if (this.beforeConnector === undefined) {
+      const existing = rules.laneConnectors.get(this.connector.id)
+      this.beforeConnector = existing ? cloneLaneConnector(existing) : null
+    }
+    rules.addLaneConnector(cloneLaneConnector(this.connector))
+  }
+
+  undo(): void {
+    if (this.duplicateConnectorId) return
+    const rules = useTrafficRuleStore()
+    if (this.beforeConnector) {
+      rules.addLaneConnector(cloneLaneConnector(this.beforeConnector))
+      return
+    }
+    rules.removeLaneConnector(this.connector.id)
+  }
+
+  getDescription(): string {
+    return `Set lane connector ${this.connector.fromLaneId} -> ${this.connector.toLaneId}`
+  }
+}
+
+export class RemoveLaneConnectorCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private beforeConnector: LaneConnector | null = null
+
+  constructor(private connectorId: string) {}
+
+  execute(): void {
+    const rules = useTrafficRuleStore()
+    const connector = rules.laneConnectors.get(this.connectorId)
+    if (!connector) return
+    if (!this.beforeConnector) this.beforeConnector = cloneLaneConnector(connector)
+    rules.removeLaneConnector(this.connectorId)
+  }
+
+  undo(): void {
+    if (!this.beforeConnector) return
+    const rules = useTrafficRuleStore()
+    rules.addLaneConnector(cloneLaneConnector(this.beforeConnector))
+  }
+
+  getDescription(): string {
+    return `Remove lane connector ${this.connectorId}`
   }
 }
 

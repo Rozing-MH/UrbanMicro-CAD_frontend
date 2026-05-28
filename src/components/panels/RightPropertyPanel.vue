@@ -102,6 +102,15 @@
           </label>
         </div>
 
+        <h4 class="sub-title">车道连接</h4>
+        <ul v-if="segmentConnectors.length" class="connector-list">
+          <li v-for="conn in segmentConnectors" :key="conn.id" class="connector-row">
+            <span class="mono">{{ laneLabel(conn.fromLaneId) }} → {{ laneLabel(conn.toLaneId) }}</span>
+            <button class="conn-delete" @click="removeConnector(conn.id)">✕</button>
+          </li>
+        </ul>
+        <p v-else class="no-connectors">暂无连接器</p>
+
         <div class="prop-actions">
           <button class="primary-btn" @click="applyActiveProfile">应用当前断面</button>
           <button class="danger-btn" @click="deleteSelected">删除该路段</button>
@@ -172,6 +181,7 @@ import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { historyStack, type HistorySessionId } from '@/commands/HistoryStack'
 import {
   DeleteSegmentCommand,
+  RemoveLaneConnectorCommand,
   SetLaneRestrictionCommand,
   UpdateNodeCommand,
   UpdateSegmentCommand,
@@ -215,6 +225,24 @@ const selectedSegmentLanes = computed<Lane[]>(() => {
   if (!selectedSegment.value) return []
   return road.getLanesBySegment(selectedSegment.value.id)
 })
+
+const segmentConnectors = computed(() => {
+  if (!selectedSegment.value) return []
+  const segId = selectedSegment.value.id
+  const laneIds = new Set(road.getSegmentLaneIds(segId))
+  return Array.from(rules.laneConnectors.values()).filter(
+    (c) => laneIds.has(c.fromLaneId) || laneIds.has(c.toLaneId),
+  )
+})
+
+function laneLabel(laneId: string): string {
+  const lane = road.lanes.get(laneId)
+  return lane ? `车道${lane.index + 1}` : laneId.slice(0, 6)
+}
+
+function removeConnector(connectorId: string): void {
+  void executePanelCommand(new RemoveLaneConnectorCommand(connectorId))
+}
 
 function toggleCollapse(): void {
   editor.setPanelState({ rightPanelOpen: !editor.panelState.rightPanelOpen })
@@ -450,4 +478,9 @@ function onLightStrategyChange(ev: Event): void {
 .danger-btn { background: #a13c3c; }
 .danger-btn:hover { background: #b94a4a; }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; color: #aab2bf; }
+.connector-list { list-style: none; padding: 0; margin: 0; }
+.connector-row { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; font-size: 11px; border-bottom: 1px dashed #2a2f3a; }
+.conn-delete { background: transparent; border: none; color: #a13c3c; cursor: pointer; font-size: 12px; padding: 0 4px; }
+.conn-delete:hover { color: #e05050; }
+.no-connectors { font-size: 11px; color: #6a7180; margin: 4px 0; }
 </style>
