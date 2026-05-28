@@ -111,6 +111,16 @@
         </ul>
         <p v-else class="no-connectors">暂无连接器</p>
 
+        <h4 class="sub-title">车道箭头</h4>
+        <ul v-if="segmentArrows.length" class="arrow-list">
+          <li v-for="arrow in segmentArrows" :key="`${arrow.nodeId}:${arrow.laneId}`" class="arrow-row">
+            <span class="mono">{{ laneLabel(arrow.laneId) }}</span>
+            <span class="arrow-dirs">{{ arrow.allowedDirections.map(arrowDirectionLabel).join('、') }}</span>
+            <button class="conn-delete" @click="removeArrow(arrow.nodeId, arrow.laneId)">✕</button>
+          </li>
+        </ul>
+        <p v-else class="no-connectors">暂无箭头</p>
+
         <div class="prop-actions">
           <button class="primary-btn" @click="applyActiveProfile">应用当前断面</button>
           <button class="danger-btn" @click="deleteSelected">删除该路段</button>
@@ -182,6 +192,7 @@ import { historyStack, type HistorySessionId } from '@/commands/HistoryStack'
 import {
   DeleteSegmentCommand,
   RemoveLaneConnectorCommand,
+  SetLaneArrowCommand,
   SetLaneRestrictionCommand,
   UpdateNodeCommand,
   UpdateSegmentCommand,
@@ -190,7 +201,7 @@ import {
 } from '@/commands/roadCommands'
 import { buildSegmentGeometry } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
-import type { ElevationMode, Lane, LaneDirection, RoadSegment } from '@/types/road-network'
+import type { ElevationMode, Lane, LaneArrow, LaneDirection, RoadSegment, TurnDirection } from '@/types/road-network'
 import type { LaneRestriction, MarkingType } from '@/types/traffic-rule'
 
 const editor = useEditorStateStore()
@@ -238,6 +249,29 @@ const segmentConnectors = computed(() => {
 function laneLabel(laneId: string): string {
   const lane = road.lanes.get(laneId)
   return lane ? `车道${lane.index + 1}` : laneId.slice(0, 6)
+}
+
+const segmentArrows = computed<LaneArrow[]>(() => {
+  if (!selectedSegment.value) return []
+  const segId = selectedSegment.value.id
+  const laneIds = new Set(road.getSegmentLaneIds(segId))
+  return Array.from(road.laneArrows.values()).filter(
+    (a) => laneIds.has(a.laneId),
+  )
+})
+
+function arrowDirectionLabel(d: TurnDirection): string {
+  const labels: Record<TurnDirection, string> = { LEFT: '左转', STRAIGHT: '直行', RIGHT: '右转', U_TURN: '掉头' }
+  return labels[d]
+}
+
+function removeArrow(nodeId: string, laneId: string): void {
+  void executePanelCommand(new SetLaneArrowCommand({
+    laneId,
+    nodeId,
+    allowedDirections: [],
+    isManualOverride: true,
+  }))
 }
 
 function removeConnector(connectorId: string): void {
@@ -483,4 +517,7 @@ function onLightStrategyChange(ev: Event): void {
 .conn-delete { background: transparent; border: none; color: #a13c3c; cursor: pointer; font-size: 12px; padding: 0 4px; }
 .conn-delete:hover { color: #e05050; }
 .no-connectors { font-size: 11px; color: #6a7180; margin: 4px 0; }
+.arrow-list { list-style: none; padding: 0; margin: 0; }
+.arrow-row { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; font-size: 11px; border-bottom: 1px dashed #2a2f3a; gap: 6px; }
+.arrow-dirs { flex: 1; color: #d8dde6; }
 </style>

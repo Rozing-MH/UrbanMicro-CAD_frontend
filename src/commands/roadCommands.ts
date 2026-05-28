@@ -433,6 +433,40 @@ export class RemoveLaneConnectorCommand implements ICommand {
   }
 }
 
+function cloneLaneArrow(arrow: LaneArrow): LaneArrow {
+  return { ...arrow, allowedDirections: [...arrow.allowedDirections] }
+}
+
+export class SetLaneArrowCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private beforeArrow: LaneArrow | null | undefined
+
+  constructor(private arrow: LaneArrow) {}
+
+  execute(): void {
+    const road = useRoadNetworkStore()
+    if (this.beforeArrow === undefined) {
+      const key = `${this.arrow.nodeId}:${this.arrow.laneId}`
+      const existing = road.laneArrows.get(key)
+      this.beforeArrow = existing ? cloneLaneArrow(existing) : null
+    }
+    road.setLaneArrow(cloneLaneArrow(this.arrow))
+  }
+
+  undo(): void {
+    const road = useRoadNetworkStore()
+    if (this.beforeArrow) {
+      road.setLaneArrow(cloneLaneArrow(this.beforeArrow))
+      return
+    }
+    road.removeLaneArrow(this.arrow.nodeId, this.arrow.laneId)
+  }
+
+  getDescription(): string {
+    return `Set lane arrow ${this.arrow.laneId}@${this.arrow.nodeId}`
+  }
+}
+
 export class UpdateTrafficLightCommand implements ICommand {
   readonly timestamp = Date.now()
   private beforeLight: TrafficLightController | null = null

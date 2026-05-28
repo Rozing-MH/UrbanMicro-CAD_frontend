@@ -8,6 +8,15 @@
         <span>低</span><span>中</span><span>高</span>
       </div>
     </div>
+    <LaneArrowPicker
+      :visible="arrowPickerVisible"
+      :position="arrowPickerPosition"
+      :lane-id="arrowPickerLaneId"
+      :node-id="arrowPickerNodeId"
+      :current-directions="arrowPickerDirections"
+      @apply="onArrowPickerApply"
+      @cancel="onArrowPickerCancel"
+    />
   </div>
 </template>
 
@@ -31,12 +40,14 @@ import {
   AddTrafficLightCommand,
   CreateParallelSegmentCommand,
   DeleteSegmentCommand,
+  SetLaneArrowCommand,
   SetLaneConnectorCommand,
   UpgradeSegmentCommand,
 } from '@/commands/roadCommands'
 import { buildSegmentGeometry, createSegmentFromPoints } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
-import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData } from '@/types'
+import LaneArrowPicker from '@/components/panels/LaneArrowPicker.vue'
+import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection } from '@/types'
 
 const DEFAULT_PROFILE: CrossSectionProfile = {
   id: 'default-2lane',
@@ -113,6 +124,7 @@ const hint = computed(() => {
     case 'ROAD_EDIT': return '左键选择节点拖动调整'
     case 'TRAFFIC_LIGHT': return '点击交叉口添加信号灯'
     case 'LANE_CONNECTOR': return selectedLaneAnchor.value ? '点击目标车道完成连接，Esc 取消' : '点击源车道锚点开始连接'
+    case 'LANE_ARROW': return '点击车道锚点设置转向箭头'
     case 'MEASURE': return '依次点击起点和终点测量距离'
     default: return ''
   }
@@ -169,6 +181,15 @@ const laneAnchorGeometry = new THREE.SphereGeometry(0.3, 8, 8)
 const laneAnchorMaterial = new THREE.MeshBasicMaterial({ color: 0x41c9ff })
 const selectedLaneAnchorMaterial = new THREE.MeshBasicMaterial({ color: 0xffd166 })
 const laneConnectorMaterial = new THREE.LineBasicMaterial({ color: 0xffb020 })
+
+// Lane arrow picker state
+const arrowPickerVisible = ref(false)
+const arrowPickerPosition = ref({ x: 0, y: 0 })
+const arrowPickerLaneId = ref('')
+const arrowPickerNodeId = ref('')
+const arrowPickerDirections = ref<TurnDirection[]>([])
+const laneArrowMeshes: Map<string, THREE.Sprite> = new Map()
+const arrowSpriteMaterial = new THREE.SpriteMaterial({ color: 0xffffff, opacity: 0.9 })
 
 function buildFallbackRoadMesh(centerLine: Point2D[], halfWidth: number, elevation: number): MeshData {
   const start = centerLine[0]
@@ -435,7 +456,7 @@ function getLaneAnchorPositions(segmentId: string): LaneAnchor[] {
 function updateLaneAnchorMeshes(): void {
   const scene = sceneRef.value
   if (!scene) return
-  const isConnectorTool = editorStore.activeTool === 'LANE_CONNECTOR'
+  const isConnectorTool = editorStore.activeTool === 'LANE_CONNECTOR' || editorStore.activeTool === 'LANE_ARROW'
   const activeSegmentId = roadStore.selectedSegmentIds.values().next().value as string | undefined
   for (const [key, mesh] of laneAnchorMeshes) {
     scene.remove(mesh)
@@ -542,6 +563,120 @@ async function handleLaneConnector(event: MouseEvent, sessionId: HistorySessionI
   updateLaneConnectorMeshes()
 }
 
+const ARROW_ICONS: Record<TurnDirection, string> = {
+  LEFT: '↰',
+  STRAIGHT: '↑',
+  RIGHT: '↱',
+  U_TURN: '↩',
+}
+
+function makeArrowCanvas(directions: TurnDirection[]): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = 64
+  canvas.height = 64
+  const ctx = canvas.getContext('2d')!
+  ctx.clearRect(0, 0, 64, 64)
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 28px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const text = directions.map((d) => ARROW_ICONS[d]).join('')
+  ctx.fillText(text, 32, 32)
+  return canvas
+}
+
+function updateLaneArrowMeshes(): void {
+  const scene = sceneRef.value
+  if (!scene) return
+  for (const [key, sprite] of laneArrowMeshes) {
+    scene.remove(sprite)
+    sprite.material.map?.dispose()
+    sprite.material.dispose()
+    laneArrowMeshes.delete(key)
+  }
+  const isArrowTool = editorStore.activeTool === 'LANE_ARROW'
+  const activeSegmentId = roadStore.selectedSegmentIds.values().next().value as string | undefined
+  if (!isArrowTool || !activeSegmentId) return
+  const segment = roadStore.getSegment(activeSegmentId)
+  if (!segment) return
+  const anchors = getLaneAnchorPositions(activeSegmentId)
+  // Find nodes connected to this segment
+  const nodeIds = new Set<string>()
+  const startNode = roadStore.getNode(segment.startNodeId)
+  const endNode = roadStore.getNode(segment.endNodeId)
+  if (startNode) nodeIds.add(startNode.id)
+  if (endNode) nodeIds.add(endNode.id)
+  for (const anchor of anchors) {
+    for (const nodeId of nodeIds) {
+      const key = `${nodeId}:${anchor.laneId}`
+      const arrow = roadStore.laneArrows.get(key)
+      if (!arrow || arrow.allowedDirections.length === 0) continue
+      const canvas = makeArrowCanvas(arrow.allowedDirections)
+      const texture = new THREE.CanvasTexture(canvas)
+      const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.9 })
+      const sprite = new THREE.Sprite(mat)
+      sprite.position.set(anchor.point.x, anchor.elevation + 1.0, anchor.point.y)
+      sprite.scale.set(2, 2, 1)
+      scene.add(sprite)
+      laneArrowMeshes.set(key, sprite)
+    }
+  }
+}
+
+function handleLaneArrow(event: MouseEvent, _sessionId: HistorySessionId): void {
+  const anchor = pickLaneAnchor(event)
+  if (!anchor) {
+    const picked = pickSceneObject(event)
+    if (picked?.segmentId) {
+      roadStore.selectSegment(picked.segmentId)
+      updateLaneAnchorMeshes()
+      updateLaneArrowMeshes()
+    }
+    return
+  }
+  // Find the node at the clicked end of the segment
+  const segment = roadStore.getSegment(anchor.segmentId)
+  if (!segment) return
+  const startNode = roadStore.getNode(segment.startNodeId)
+  const endNode = roadStore.getNode(segment.endNodeId)
+  if (!startNode || !endNode) return
+  // Determine which node is closer to the anchor
+  const distToStart = Math.hypot(anchor.point.x - startNode.position.x, anchor.point.y - startNode.position.y)
+  const distToEnd = Math.hypot(anchor.point.x - endNode.position.x, anchor.point.y - endNode.position.y)
+  const nodeId = distToStart < distToEnd ? startNode.id : endNode.id
+  const key = `${nodeId}:${anchor.laneId}`
+  const existing = roadStore.laneArrows.get(key)
+  arrowPickerLaneId.value = anchor.laneId
+  arrowPickerNodeId.value = nodeId
+  arrowPickerDirections.value = existing ? [...existing.allowedDirections] : []
+  arrowPickerPosition.value = { x: event.clientX + 12, y: event.clientY - 20 }
+  arrowPickerVisible.value = true
+}
+
+async function onArrowPickerApply(data: {
+  laneId: string
+  nodeId: string
+  allowedDirections: TurnDirection[]
+}): Promise<void> {
+  arrowPickerVisible.value = false
+  const sessionId = editorStore.historySessionId
+  if (sessionId === null) return
+  await executeHistoryCommand(
+    new SetLaneArrowCommand({
+      laneId: data.laneId,
+      nodeId: data.nodeId,
+      allowedDirections: data.allowedDirections,
+      isManualOverride: true,
+    }),
+    sessionId,
+  )
+  updateLaneArrowMeshes()
+}
+
+function onArrowPickerCancel(): void {
+  arrowPickerVisible.value = false
+}
+
 async function handleTrafficLight(event: MouseEvent, sessionId: HistorySessionId): Promise<void> {
   const picked = pickSceneObject(event)
   if (!picked?.nodeId) return
@@ -581,6 +716,7 @@ async function onPointerDown(event: MouseEvent): Promise<void> {
   else if (editorStore.activeTool === 'BULLDOZER') await handleBulldozer(event, sessionId)
   else if (editorStore.activeTool === 'TRAFFIC_LIGHT') await handleTrafficLight(event, sessionId)
   else if (editorStore.activeTool === 'LANE_CONNECTOR') await handleLaneConnector(event, sessionId)
+  else if (editorStore.activeTool === 'LANE_ARROW') handleLaneArrow(event, sessionId)
 }
 
 function syncRendererWithStore(): void {
@@ -606,6 +742,7 @@ function onKeyDown(event: KeyboardEvent): void {
     roadStore.cancelDrawing()
     clearPreview()
     clearLaneConnectorState()
+    arrowPickerVisible.value = false
   } else if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
     event.preventDefault()
     const sessionId = editorStore.historySessionId
@@ -657,6 +794,7 @@ watch(
   () => {
     if (editorStore.activeTool !== 'LANE_CONNECTOR') clearLaneConnectorState()
     updateLaneAnchorMeshes()
+    updateLaneArrowMeshes()
   },
 )
 
@@ -723,6 +861,12 @@ onBeforeUnmount(() => {
   laneAnchorMaterial.dispose()
   selectedLaneAnchorMaterial.dispose()
   laneConnectorMaterial.dispose()
+  arrowSpriteMaterial.dispose()
+  for (const [, sprite] of laneArrowMeshes) {
+    sprite.material.map?.dispose()
+    sprite.material.dispose()
+  }
+  laneArrowMeshes.clear()
   cameraControls.detach()
   renderer.dispose()
 })
