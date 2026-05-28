@@ -7,7 +7,11 @@ import type {
   RoadNode,
   RoadSegment,
 } from '@/types/road-network'
-import type { LaneConnector, LaneRestriction, TrafficLightController, TurnRestriction } from '@/types/traffic-rule'
+import type { LaneConnector, LaneRestriction, SignalStep, TrafficLightController, TurnRestriction } from '@/types/traffic-rule'
+
+function turnRestrictionKey(tr: TurnRestriction): string {
+  return `${tr.nodeId}:${tr.fromSegmentId}:${tr.toSegmentId}:${tr.restriction}`
+}
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 
@@ -50,10 +54,6 @@ function cloneNode(node: RoadNode): RoadNode {
     connectedSegmentIds: [...node.connectedSegmentIds],
     polygonVertices: node.polygonVertices.map((point) => ({ ...point })),
   }
-}
-
-function turnRestrictionKey(tr: TurnRestriction): string {
-  return `${tr.nodeId}:${tr.fromSegmentId}:${tr.toSegmentId}:${tr.restriction}`
 }
 
 function captureRulesForLaneIds(laneIds: Set<string>, segmentIds = new Set<string>()): RuleSnapshot {
@@ -492,6 +492,94 @@ export class UpdateTrafficLightCommand implements ICommand {
 
   getDescription(): string {
     return `Update traffic light ${this.lightId}`
+  }
+}
+
+export class AddSignalStepCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private oldSteps: SignalStep[] | null = null
+
+  constructor(
+    private controllerId: string,
+    private step: SignalStep,
+  ) {}
+
+  execute(): void {
+    const rules = useTrafficRuleStore()
+    const light = rules.trafficLights.get(this.controllerId)
+    if (!light) throw new Error('无法添加步阶：目标控制器不存在')
+    if (!this.oldSteps) this.oldSteps = light.steps.map((s) => ({ ...s, greenLanes: [...s.greenLanes], sensorBindings: s.sensorBindings.map((b) => ({ ...b })) }))
+    rules.updateTrafficLight(this.controllerId, { steps: [...light.steps, { ...this.step, greenLanes: [...this.step.greenLanes], sensorBindings: this.step.sensorBindings.map((b) => ({ ...b })) }] })
+  }
+
+  undo(): void {
+    if (!this.oldSteps) return
+    const rules = useTrafficRuleStore()
+    rules.updateTrafficLight(this.controllerId, { steps: this.oldSteps.map((s) => ({ ...s, greenLanes: [...s.greenLanes], sensorBindings: s.sensorBindings.map((b) => ({ ...b })) })) })
+  }
+
+  getDescription(): string {
+    return `Add signal step to ${this.controllerId}`
+  }
+}
+
+export class RemoveSignalStepCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private oldSteps: SignalStep[] | null = null
+
+  constructor(
+    private controllerId: string,
+    private stepId: string,
+  ) {}
+
+  execute(): void {
+    const rules = useTrafficRuleStore()
+    const light = rules.trafficLights.get(this.controllerId)
+    if (!light) return
+    if (!this.oldSteps) this.oldSteps = light.steps.map((s) => ({ ...s, greenLanes: [...s.greenLanes], sensorBindings: s.sensorBindings.map((b) => ({ ...b })) }))
+    rules.updateTrafficLight(this.controllerId, { steps: light.steps.filter((s) => s.id !== this.stepId) })
+  }
+
+  undo(): void {
+    if (!this.oldSteps) return
+    const rules = useTrafficRuleStore()
+    rules.updateTrafficLight(this.controllerId, { steps: this.oldSteps.map((s) => ({ ...s, greenLanes: [...s.greenLanes], sensorBindings: s.sensorBindings.map((b) => ({ ...b })) })) })
+  }
+
+  getDescription(): string {
+    return `Remove signal step ${this.stepId} from ${this.controllerId}`
+  }
+}
+
+export class SetTurnRestrictionCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private key: string
+  private beforeRestriction: TurnRestriction | null = null
+
+  constructor(private restriction: TurnRestriction) {
+    this.key = turnRestrictionKey(restriction)
+  }
+
+  execute(): void {
+    const rules = useTrafficRuleStore()
+    if (!this.beforeRestriction) {
+      const existing = rules.turnRestrictions.get(this.key)
+      this.beforeRestriction = existing ? { ...existing } : null
+    }
+    rules.addTurnRestriction({ ...this.restriction })
+  }
+
+  undo(): void {
+    const rules = useTrafficRuleStore()
+    if (this.beforeRestriction) {
+      rules.addTurnRestriction({ ...this.beforeRestriction })
+      return
+    }
+    rules.removeTurnRestriction(this.key)
+  }
+
+  getDescription(): string {
+    return `Set turn restriction ${this.key}`
   }
 }
 

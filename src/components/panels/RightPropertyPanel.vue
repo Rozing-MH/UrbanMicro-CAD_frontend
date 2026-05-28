@@ -159,25 +159,20 @@
           <label>连接段</label>
           <span>{{ selectedNode.connectedSegmentIds.length }} 条</span>
         </div>
+
+        <h4 class="sub-title">转向限制</h4>
+        <ul v-if="nodeTurnRestrictions.length" class="connector-list">
+          <li v-for="tr in nodeTurnRestrictions" :key="`${tr.fromSegmentId}:${tr.toSegmentId}:${tr.restriction}`" class="connector-row">
+            <span class="mono">{{ segShort(tr.fromSegmentId) }} → {{ segShort(tr.toSegmentId) }}: {{ restrictionLabel(tr.restriction) }}</span>
+            <button class="conn-delete" @click="removeTurnRestriction(tr)">✕</button>
+          </li>
+        </ul>
+        <p v-else class="no-connectors">暂无转向限制</p>
       </section>
 
       <section v-else-if="selectedLight" class="prop-group">
         <h3 class="prop-title">信号灯控制器</h3>
-        <div class="prop-row">
-          <label>策略</label>
-          <select :value="selectedLight.strategy" @change="onLightStrategyChange">
-            <option value="FIXED">固定时间</option>
-            <option value="ACTUATED">感应控制</option>
-          </select>
-        </div>
-        <div class="prop-row">
-          <label>周期 (s)</label>
-          <span>{{ cycleLength.toFixed(1) }}</span>
-        </div>
-        <div class="prop-row">
-          <label>阶段数</label>
-          <span>{{ selectedLight.steps.length }}</span>
-        </div>
+        <TrafficLightEditor :light="selectedLight" />
       </section>
     </div>
   </aside>
@@ -194,15 +189,16 @@ import {
   RemoveLaneConnectorCommand,
   SetLaneArrowCommand,
   SetLaneRestrictionCommand,
+  SetTurnRestrictionCommand,
   UpdateNodeCommand,
   UpdateSegmentCommand,
-  UpdateTrafficLightCommand,
   UpgradeSegmentCommand,
 } from '@/commands/roadCommands'
 import { buildSegmentGeometry } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
+import TrafficLightEditor from '@/components/panels/TrafficLightEditor.vue'
 import type { ElevationMode, Lane, LaneArrow, LaneDirection, RoadSegment, TurnDirection } from '@/types/road-network'
-import type { LaneRestriction, MarkingType } from '@/types/traffic-rule'
+import type { LaneRestriction, MarkingType, TurnRestriction } from '@/types/traffic-rule'
 
 const editor = useEditorStateStore()
 const road = useRoadNetworkStore()
@@ -271,6 +267,39 @@ function removeArrow(nodeId: string, laneId: string): void {
     nodeId,
     allowedDirections: [],
     isManualOverride: true,
+  }))
+}
+
+const nodeTurnRestrictions = computed<TurnRestriction[]>(() => {
+  if (!selectedNode.value) return []
+  const nodeId = selectedNode.value.id
+  return Array.from(rules.turnRestrictions.values()).filter(
+    (tr) => tr.nodeId === nodeId,
+  )
+})
+
+function segShort(segId: string): string {
+  const seg = road.segments.get(segId)
+  return seg ? `${seg.id.slice(0, 6)}…` : segId.slice(0, 6)
+}
+
+function restrictionLabel(r: TurnRestriction['restriction']): string {
+  const labels: Record<TurnRestriction['restriction'], string> = {
+    NO_LEFT: '禁左',
+    NO_RIGHT: '禁右',
+    NO_STRAIGHT: '禁直',
+    NO_UTURN: '禁掉头',
+    NONE: '无限制',
+  }
+  return labels[r]
+}
+
+function removeTurnRestriction(tr: TurnRestriction): void {
+  void executePanelCommand(new SetTurnRestrictionCommand({
+    nodeId: tr.nodeId,
+    fromSegmentId: tr.fromSegmentId,
+    toSegmentId: tr.toSegmentId,
+    restriction: 'NONE',
   }))
 }
 
@@ -434,20 +463,6 @@ function onControlModeChange(ev: Event): void {
   if (!selectedNode.value) return
   const controlMode = (ev.target as HTMLSelectElement).value as 'NONE' | 'YIELD' | 'TRAFFIC_LIGHT' | 'ROUNDABOUT'
   void executePanelCommand(new UpdateNodeCommand(selectedNode.value.id, { controlMode }))
-}
-
-const cycleLength = computed<number>(() => {
-  if (!selectedLight.value) return 0
-  return selectedLight.value.steps.reduce(
-    (sum, s) => sum + s.minGreenTime + s.yellowTime + s.allRedTime,
-    0,
-  )
-})
-
-function onLightStrategyChange(ev: Event): void {
-  if (!selectedLight.value) return
-  const strategy = (ev.target as HTMLSelectElement).value as 'FIXED' | 'ACTUATED'
-  void executePanelCommand(new UpdateTrafficLightCommand(selectedLight.value.id, { strategy }))
 }
 </script>
 

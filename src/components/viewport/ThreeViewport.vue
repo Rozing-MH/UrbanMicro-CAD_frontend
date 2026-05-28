@@ -17,6 +17,33 @@
       @apply="onArrowPickerApply"
       @cancel="onArrowPickerCancel"
     />
+    <Teleport to="body">
+      <div v-if="trPickerVisible" class="tr-picker" :style="{ left: trPickerPosition.x + 'px', top: trPickerPosition.y + 'px' }">
+        <div class="tr-picker-title">转向限制</div>
+        <div class="tr-picker-row">
+          <label>来向路段</label>
+          <select v-model="trPickerFromSegId">
+            <option v-for="s in trPickerConnectedSegs" :key="s.id" :value="s.id">{{ s.label }}</option>
+          </select>
+        </div>
+        <div class="tr-picker-row">
+          <label>去向路段</label>
+          <select v-model="trPickerToSegId">
+            <option v-for="s in trPickerConnectedSegs" :key="s.id" :value="s.id">{{ s.label }}</option>
+          </select>
+        </div>
+        <div class="tr-picker-row">
+          <label>限制类型</label>
+          <select v-model="trPickerRestriction">
+            <option v-for="opt in restrictionOpts" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+        </div>
+        <div class="tr-picker-actions">
+          <button @click="onTurnRestrictionApply">确认</button>
+          <button @click="onTurnRestrictionCancel">取消</button>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -42,12 +69,14 @@ import {
   DeleteSegmentCommand,
   SetLaneArrowCommand,
   SetLaneConnectorCommand,
+  SetTurnRestrictionCommand,
   UpgradeSegmentCommand,
 } from '@/commands/roadCommands'
 import { buildSegmentGeometry, createSegmentFromPoints } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
 import LaneArrowPicker from '@/components/panels/LaneArrowPicker.vue'
 import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection } from '@/types'
+import type { TurnRestriction as TurnRestrictionType } from '@/types/traffic-rule'
 
 const DEFAULT_PROFILE: CrossSectionProfile = {
   id: 'default-2lane',
@@ -125,6 +154,7 @@ const hint = computed(() => {
     case 'TRAFFIC_LIGHT': return '点击交叉口添加信号灯'
     case 'LANE_CONNECTOR': return selectedLaneAnchor.value ? '点击目标车道完成连接，Esc 取消' : '点击源车道锚点开始连接'
     case 'LANE_ARROW': return '点击车道锚点设置转向箭头'
+    case 'TURN_RESTRICTION': return '点击交叉口节点设置转向限制'
     case 'MEASURE': return '依次点击起点和终点测量距离'
     default: return ''
   }
@@ -190,6 +220,24 @@ const arrowPickerNodeId = ref('')
 const arrowPickerDirections = ref<TurnDirection[]>([])
 const laneArrowMeshes: Map<string, THREE.Sprite> = new Map()
 const arrowSpriteMaterial = new THREE.SpriteMaterial({ color: 0xffffff, opacity: 0.9 })
+
+// Turn restriction picker state
+const trPickerVisible = ref(false)
+const trPickerPosition = ref({ x: 0, y: 0 })
+const trPickerNodeId = ref('')
+const trPickerFromSegId = ref('')
+const trPickerToSegId = ref('')
+const trPickerRestriction = ref<TurnRestrictionType['restriction']>('NO_LEFT')
+const trPickerConnectedSegs = ref<{ id: string; label: string }[]>([])
+
+const RESTRICTION_OPTIONS: { value: TurnRestrictionType['restriction']; label: string }[] = [
+  { value: 'NO_LEFT', label: '禁止左转' },
+  { value: 'NO_RIGHT', label: '禁止右转' },
+  { value: 'NO_STRAIGHT', label: '禁止直行' },
+  { value: 'NO_UTURN', label: '禁止掉头' },
+  { value: 'NONE', label: '无限制' },
+]
+const restrictionOpts = RESTRICTION_OPTIONS
 
 function buildFallbackRoadMesh(centerLine: Point2D[], halfWidth: number, elevation: number): MeshData {
   const start = centerLine[0]
@@ -677,6 +725,45 @@ function onArrowPickerCancel(): void {
   arrowPickerVisible.value = false
 }
 
+function handleTurnRestriction(event: MouseEvent, _sessionId: HistorySessionId): void {
+  const picked = pickSceneObject(event)
+  if (!picked?.nodeId) return
+  const node = roadStore.getNode(picked.nodeId)
+  if (!node || node.connectedSegmentIds.length < 2) {
+    editorStore.showNotification({ type: 'warning', message: '请选择至少连接两条路段的交叉口节点' })
+    return
+  }
+  const segs = node.connectedSegmentIds
+    .map((id) => { const s = roadStore.getSegment(id); return s ? { id: s.id, label: `${s.id.slice(0, 6)}…` } : null })
+    .filter(Boolean) as { id: string; label: string }[]
+  trPickerNodeId.value = node.id
+  trPickerFromSegId.value = segs[0]?.id ?? ''
+  trPickerToSegId.value = segs.length > 1 ? segs[1].id : segs[0]?.id ?? ''
+  trPickerRestriction.value = 'NO_LEFT'
+  trPickerConnectedSegs.value = segs
+  trPickerPosition.value = { x: event.clientX + 12, y: event.clientY - 20 }
+  trPickerVisible.value = true
+}
+
+async function onTurnRestrictionApply(): Promise<void> {
+  trPickerVisible.value = false
+  const sessionId = editorStore.historySessionId
+  if (sessionId === null) return
+  await executeHistoryCommand(
+    new SetTurnRestrictionCommand({
+      nodeId: trPickerNodeId.value,
+      fromSegmentId: trPickerFromSegId.value,
+      toSegmentId: trPickerToSegId.value,
+      restriction: trPickerRestriction.value,
+    }),
+    sessionId,
+  )
+}
+
+function onTurnRestrictionCancel(): void {
+  trPickerVisible.value = false
+}
+
 async function handleTrafficLight(event: MouseEvent, sessionId: HistorySessionId): Promise<void> {
   const picked = pickSceneObject(event)
   if (!picked?.nodeId) return
@@ -717,6 +804,7 @@ async function onPointerDown(event: MouseEvent): Promise<void> {
   else if (editorStore.activeTool === 'TRAFFIC_LIGHT') await handleTrafficLight(event, sessionId)
   else if (editorStore.activeTool === 'LANE_CONNECTOR') await handleLaneConnector(event, sessionId)
   else if (editorStore.activeTool === 'LANE_ARROW') handleLaneArrow(event, sessionId)
+  else if (editorStore.activeTool === 'TURN_RESTRICTION') handleTurnRestriction(event, sessionId)
 }
 
 function syncRendererWithStore(): void {
@@ -743,6 +831,7 @@ function onKeyDown(event: KeyboardEvent): void {
     clearPreview()
     clearLaneConnectorState()
     arrowPickerVisible.value = false
+    trPickerVisible.value = false
   } else if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
     event.preventDefault()
     const sessionId = editorStore.historySessionId
@@ -918,4 +1007,58 @@ onBeforeUnmount(() => {
   font-size: 11px;
   color: #aaa;
 }
+.tr-picker {
+  position: fixed;
+  z-index: 9999;
+  background: #1f232b;
+  border: 1px solid #4a8cd0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: #d8dde6;
+  font-size: 12px;
+  min-width: 200px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+.tr-picker-title {
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: #6cb6ff;
+}
+.tr-picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.tr-picker-row label {
+  color: #8e94a0;
+  margin-right: 8px;
+}
+.tr-picker-row select {
+  flex: 1;
+  padding: 3px 6px;
+  background: #14171c;
+  border: 1px solid #2a2f3a;
+  color: #d8dde6;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.tr-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.tr-picker-actions button {
+  padding: 4px 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #fff;
+}
+.tr-picker-actions button:first-child { background: #2c5d99; }
+.tr-picker-actions button:first-child:hover { background: #3670b8; }
+.tr-picker-actions button:last-child { background: #4a5160; }
+.tr-picker-actions button:last-child:hover { background: #5a6270; }
 </style>

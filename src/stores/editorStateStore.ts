@@ -13,6 +13,7 @@ export type ToolMode =
   | 'LANE_CONNECTOR'
   | 'LANE_RESTRICTION'
   | 'LANE_ARROW'
+  | 'TURN_RESTRICTION'
   | 'OD_MARKER'
   | 'MEASURE'
   | 'PAN'

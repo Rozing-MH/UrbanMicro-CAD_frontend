@@ -95,6 +95,7 @@ const toolList: ToolDef[] = [
   { id: 'LANE_CONNECTOR',  icon: '↪', label: '车道',   title: '车道连接' },
   { id: 'LANE_RESTRICTION', icon: '⊘', label: '限制',   title: '车道限制与标线' },
   { id: 'LANE_ARROW',      icon: '↱', label: '箭头',   title: '车道转向箭头' },
+  { id: 'TURN_RESTRICTION', icon: '⊘', label: '转向', title: '转向限制' },
   { id: 'OD_MARKER',       icon: '⊕', label: 'OD',     title: 'OD 标记' },
   { id: 'MEASURE',         icon: '📏', label: '测量',   title: '距离测量' },
   { id: 'PAN',             icon: '✋', label: '平移',   title: '平移视图' },
