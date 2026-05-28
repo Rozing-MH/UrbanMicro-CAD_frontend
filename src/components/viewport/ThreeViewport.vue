@@ -75,8 +75,10 @@ import {
 } from '@/commands/roadCommands'
 import { buildSegmentGeometry, createSegmentFromPoints } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
+import { buildQuadraticCenterLine, approximateCurveLength } from '@/adapters/BezierJsAdapter'
 import LaneArrowPicker from '@/components/panels/LaneArrowPicker.vue'
-import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection } from '@/types'
+import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection, ElevationMode } from '@/types'
+import { SLOPE_LIMITS } from '@/types/road-network'
 import type { TurnRestriction as TurnRestrictionType } from '@/types/traffic-rule'
 
 const DEFAULT_PROFILE: CrossSectionProfile = {
@@ -147,7 +149,12 @@ async function executeHistoryCommand(
 
 const hint = computed(() => {
   switch (editorStore.activeTool) {
-    case 'ROAD_DRAW': return '左键放置道路节点，Esc 结束'
+    case 'ROAD_DRAW': {
+      const ctx = roadStore.drawingContext
+      if (ctx.mode === 'CURVE' && curveEndPoint.value) return '移动鼠标调整曲线弧度，左键确认，Esc 取消'
+      if (ctx.mode === 'CURVE') return '左键放置曲线终点，Esc 取消'
+      return '左键放置道路节点，Esc 结束'
+    }
     case 'ROAD_UPGRADE': return '点击路段，使用左侧当前断面原位升级'
     case 'PARALLEL_ROAD': return '点击路段，按当前断面宽度生成平行路'
     case 'BULLDOZER': return '点击路段删除，支持撤销/重做'
@@ -203,11 +210,17 @@ interface LaneAnchor {
   elevation: number
 }
 
-let previewMesh: THREE.Line | null = null
+let previewGroup: THREE.Group | null = null
 let simTickInFlight = false
 const isDragging = ref(false)
 const dragNodeId = ref<string | null>(null)
 const dragStartNodePos = ref<Point2D | null>(null)
+
+// Curve drawing state: after setting start+end, mouse controls the Bezier handle
+const curveEndPoint = ref<Point2D | null>(null)
+const curveEndNodeId = ref<string | null>(null)
+const curveEndNodeCreated = ref(false)
+const curveEndNode = ref<RoadNode | null>(null)
 const selectedLaneAnchor = ref<LaneAnchor | null>(null)
 const laneAnchorMeshes: Map<string, THREE.Mesh> = new Map()
 const laneConnectorMeshes: Map<string, THREE.Line> = new Map()
@@ -215,6 +228,39 @@ const laneAnchorGeometry = new THREE.SphereGeometry(0.3, 8, 8)
 const laneAnchorMaterial = new THREE.MeshBasicMaterial({ color: 0x41c9ff })
 const selectedLaneAnchorMaterial = new THREE.MeshBasicMaterial({ color: 0xffd166 })
 const laneConnectorMaterial = new THREE.LineBasicMaterial({ color: 0xffb020 })
+
+// Road preview materials (shared, not disposed per-frame)
+const previewSurfaceMaterial = new THREE.MeshBasicMaterial({
+  color: 0x3a7bd5,
+  transparent: true,
+  opacity: 0.4,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+})
+const previewLaneDividerMaterial = new THREE.LineDashedMaterial({
+  color: 0xffffff,
+  dashSize: 0.5,
+  gapSize: 0.3,
+  transparent: true,
+  opacity: 0.7,
+})
+const previewCenterLineMaterial = new THREE.LineBasicMaterial({
+  color: 0xffcc00,
+  transparent: true,
+  opacity: 0.8,
+})
+const previewCenterLineDashedMaterial = new THREE.LineDashedMaterial({
+  color: 0xffcc00,
+  dashSize: 1,
+  gapSize: 0.5,
+  transparent: true,
+  opacity: 0.6,
+})
+const previewEdgeMaterial = new THREE.LineBasicMaterial({
+  color: 0x666666,
+  transparent: true,
+  opacity: 0.5,
+})
 
 // Lane arrow picker state
 const arrowPickerVisible = ref(false)
@@ -274,29 +320,200 @@ async function buildRoadMesh(centerLine: Point2D[], profile: CrossSectionProfile
   return buildSegmentGeometry(centerLine, profile, elevation)
 }
 
-function drawPreviewLine(a: Point2D, b: Point2D): void {
+function makePreviewLine(
+  start: Point2D, end: Point2D,
+  nx: number, ny: number, offset: number, elev: number,
+  material: THREE.Material,
+): THREE.Line {
+  const geom = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(start.x + nx * offset, elev, start.y + ny * offset),
+    new THREE.Vector3(end.x + nx * offset, elev, end.y + ny * offset),
+  ])
+  return new THREE.Line(geom, material)
+}
+
+function createMeasurementSprite(text: string): THREE.Sprite {
+  const canvas = document.createElement('canvas')
+  const W = 256, H = 64
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.65)'
+  ctx.beginPath()
+  ctx.moveTo(8, 0)
+  ctx.lineTo(W - 8, 0)
+  ctx.quadraticCurveTo(W, 0, W, 8)
+  ctx.lineTo(W, H - 8)
+  ctx.quadraticCurveTo(W, H, W - 8, H)
+  ctx.lineTo(8, H)
+  ctx.quadraticCurveTo(0, H, 0, H - 8)
+  ctx.lineTo(0, 8)
+  ctx.quadraticCurveTo(0, 0, 8, 0)
+  ctx.closePath()
+  ctx.fill()
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 28px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, W / 2, H / 2)
+  const texture = new THREE.CanvasTexture(canvas)
+  const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false })
+  const sprite = new THREE.Sprite(spriteMat)
+  sprite.scale.set(4, 1, 1)
+  return sprite
+}
+
+function drawPreviewRoad(
+  start: Point2D,
+  end: Point2D,
+  profile: CrossSectionProfile,
+  centerLine?: Point2D[],
+): void {
   const scene = sceneRef.value
   if (!scene) return
-  if (previewMesh) {
-    scene.remove(previewMesh)
-    previewMesh.geometry.dispose()
+  clearPreview()
+
+  // Use provided centerLine (curve) or fall back to straight [start, end]
+  const pts = centerLine && centerLine.length >= 2 ? centerLine : [start, end]
+  const length = approximateCurveLength(pts)
+  if (length < 0.5) return
+
+  const halfWidth = profile.totalWidth / 2
+  const E = 0.15
+
+  const group = new THREE.Group()
+
+  // Semi-transparent road surface — red if slope exceeds limit
+  const elevDiff = (roadStore.drawingContext.endElevation ?? 0) - (roadStore.drawingContext.startElevation ?? 0)
+  const slopePct = length > 0.01 ? Math.abs(elevDiff / length * 100) : 0
+  const elevationMode: ElevationMode = roadStore.drawingContext.currentElevationMode
+  const slopeLimit = SLOPE_LIMITS[elevationMode]
+  const slopeOverLimit = slopePct > slopeLimit
+  const surfaceMat = slopeOverLimit
+    ? new THREE.MeshBasicMaterial({ color: 0xcc3333, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })
+    : previewSurfaceMaterial
+
+  // Build ribbon surface from centerLine
+  const leftEdge = offsetCenterLineLocal(pts, halfWidth)
+  const rightEdge = offsetCenterLineLocal(pts, -halfWidth)
+  if (leftEdge.length === rightEdge.length && leftEdge.length >= 2) {
+    const verts: number[] = []
+    const norms: number[] = []
+    const idx: number[] = []
+    for (let i = 0; i < leftEdge.length; i++) {
+      verts.push(leftEdge[i].x, E, leftEdge[i].y)
+      norms.push(0, 1, 0)
+      verts.push(rightEdge[i].x, E, rightEdge[i].y)
+      norms.push(0, 1, 0)
+    }
+    for (let i = 0; i < leftEdge.length - 1; i++) {
+      const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1
+      idx.push(a, b, c, c, b, d)
+    }
+    const surfGeom = new THREE.BufferGeometry()
+    surfGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3))
+    surfGeom.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(norms), 3))
+    surfGeom.setIndex(idx)
+    group.add(new THREE.Mesh(surfGeom, surfaceMat))
   }
-  const geom = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(a.x, 0.1, a.y),
-    new THREE.Vector3(b.x, 0.1, b.y),
-  ])
-  const mat = new THREE.LineDashedMaterial({ color: 0x00aaff, dashSize: 1, gapSize: 0.5 })
-  previewMesh = new THREE.Line(geom, mat)
-  previewMesh.computeLineDistances()
-  scene.add(previewMesh)
+
+  // Lane divider lines (dashed white)
+  const totalLaneW = profile.lanes.reduce((s, l) => s + l.width, 0)
+  let lanePos = -totalLaneW / 2
+  for (let i = 0; i < profile.lanes.length - 1; i++) {
+    lanePos += profile.lanes[i].width
+    const divPts = offsetCenterLineLocal(pts, lanePos)
+    if (divPts.length >= 2) {
+      const lg = new THREE.BufferGeometry().setFromPoints(
+        divPts.map(p => new THREE.Vector3(p.x, E + 0.01, p.y))
+      )
+      const line = new THREE.Line(lg, previewLaneDividerMaterial)
+      line.computeLineDistances()
+      group.add(line)
+    }
+  }
+
+  // Center line (yellow — solid if median, dashed otherwise)
+  const clPoints = pts.map(p => new THREE.Vector3(p.x, E + 0.01, p.y))
+  const clGeom = new THREE.BufferGeometry().setFromPoints(clPoints)
+  if (profile.median && profile.median.width > 0) {
+    group.add(new THREE.Line(clGeom, previewCenterLineMaterial))
+  } else {
+    const cl = new THREE.Line(clGeom, previewCenterLineDashedMaterial)
+    cl.computeLineDistances()
+    group.add(cl)
+  }
+
+  // Edge lines (road surface boundary)
+  for (const edge of [leftEdge, rightEdge]) {
+    if (edge.length >= 2) {
+      const eg = new THREE.BufferGeometry().setFromPoints(
+        edge.map(p => new THREE.Vector3(p.x, E + 0.01, p.y))
+      )
+      group.add(new THREE.Line(eg, previewEdgeMaterial))
+    }
+  }
+
+  // Measurement label (length + slope + mode)
+  const midIdx = Math.floor(pts.length / 2)
+  const midPt = pts[midIdx]
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const baseLen = Math.hypot(dx, dy) || 1
+  const perpX = -dy / baseLen
+  const perpY = dx / baseLen
+  const slopeStr = slopePct.toFixed(1)
+  const modeLabel: Record<string, string> = { GROUND: '地面', BRIDGE: '高架', TUNNEL: '隧道', ANARCHY: '自由' }
+  const slopeWarning = slopeOverLimit ? ' !坡度超限' : ''
+  const label = createMeasurementSprite(`${length.toFixed(1)}m | ${slopeStr}% | ${modeLabel[elevationMode] ?? elevationMode}${slopeWarning}`)
+  label.position.set(midPt.x + perpX * (halfWidth + 2), E + 0.8, midPt.y + perpY * (halfWidth + 2))
+  group.add(label)
+
+  scene.add(group)
+  previewGroup = group
+}
+
+function offsetCenterLineLocal(centerLine: Point2D[], offset: number): Point2D[] {
+  if (centerLine.length < 2) return centerLine.map(p => ({ ...p }))
+  const result: Point2D[] = []
+  for (let i = 0; i < centerLine.length; i++) {
+    let nx: number, ny: number
+    if (i === 0) {
+      nx = centerLine[1].x - centerLine[0].x
+      ny = centerLine[1].y - centerLine[0].y
+    } else if (i === centerLine.length - 1) {
+      nx = centerLine[i].x - centerLine[i - 1].x
+      ny = centerLine[i].y - centerLine[i - 1].y
+    } else {
+      nx = centerLine[i + 1].x - centerLine[i - 1].x
+      ny = centerLine[i + 1].y - centerLine[i - 1].y
+    }
+    const len = Math.sqrt(nx * nx + ny * ny)
+    if (len < 1e-10) { result.push({ ...centerLine[i] }); continue }
+    result.push({
+      x: centerLine[i].x + (-ny / len) * offset,
+      y: centerLine[i].y + (nx / len) * offset,
+    })
+  }
+  return result
 }
 
 function clearPreview(): void {
   const scene = sceneRef.value
-  if (previewMesh && scene) {
-    scene.remove(previewMesh)
-    previewMesh.geometry.dispose()
-    previewMesh = null
+  if (previewGroup && scene) {
+    scene.remove(previewGroup)
+    previewGroup.traverse((child) => {
+      if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+        child.geometry.dispose()
+      }
+      if (child instanceof THREE.Sprite) {
+        if (child.material instanceof THREE.SpriteMaterial && child.material.map) {
+          child.material.map.dispose()
+        }
+        child.material.dispose()
+      }
+    })
+    previewGroup = null
   }
 }
 
@@ -312,7 +529,19 @@ function onPointerMove(event: MouseEvent): void {
   if (editorStore.activeTool === 'ROAD_DRAW' && roadStore.drawingContext.state === 'DRAWING') {
     roadStore.updatePreview(snapped)
     if (roadStore.drawingContext.startPoint) {
-      drawPreviewLine(roadStore.drawingContext.startPoint, snapped)
+      const profile = getProfileById(editorStore.activeProfileId)
+      // In CURVE mode with endpoint set, mouse controls the Bezier handle
+      if (roadStore.drawingContext.mode === 'CURVE' && curveEndPoint.value) {
+        const curveCenterLine = buildQuadraticCenterLine(
+          roadStore.drawingContext.startPoint,
+          snapped,
+          curveEndPoint.value,
+          32,
+        )
+        drawPreviewRoad(roadStore.drawingContext.startPoint, curveEndPoint.value, profile, curveCenterLine)
+      } else {
+        drawPreviewRoad(roadStore.drawingContext.startPoint, snapped, profile)
+      }
     }
   }
 }
@@ -341,6 +570,7 @@ function findOrCreateNode(point: Point2D): { id: string; created: boolean; node:
 
 async function handleRoadDraw(point: Point2D, sessionId: HistorySessionId): Promise<void> {
   const ctx = roadStore.drawingContext
+
   if (ctx.state === 'IDLE') {
     const found = findOrCreateNode(point)
     if (found.created) {
@@ -348,44 +578,105 @@ async function handleRoadDraw(point: Point2D, sessionId: HistorySessionId): Prom
       roadRenderer.addNode(found.node)
     }
     roadStore.startDrawing(ctx.mode, point, found.id)
+
   } else if (ctx.state === 'DRAWING' && ctx.startNodeId) {
-    const found = findOrCreateNode(point)
-    if (found.id === ctx.startNodeId) return
-    const startNode = roadStore.getNode(ctx.startNodeId)
-    if (!startNode) return
-    if (found.created) {
-      roadStore.addNode(found.node)
-      roadRenderer.addNode(found.node)
-    }
-    const profile = getProfileById(editorStore.activeProfileId)
-    const centerLine = [startNode.position, point]
-    const elevation = {
-      startZ: roadStore.drawingContext.startElevation,
-      endZ: roadStore.drawingContext.endElevation,
-      mode: roadStore.drawingContext.currentElevationMode,
-    }
-    const segment: RoadSegment = createSegmentFromPoints({
-      id: genId(),
-      startNodeId: ctx.startNodeId,
-      endNodeId: found.id,
-      centerLine,
-      profile,
-      elevation,
-      isCurved: false,
-      meshData: await buildRoadMesh(centerLine, profile, elevation.startZ),
-    })
-    if (!isCurrentHistorySession(sessionId)) return
-    const cmd = new AddSegmentCommand(segment, startNode, found.node, false, found.created)
-    await executeHistoryCommand(cmd, sessionId)
-    if (!isCurrentHistorySession(sessionId)) return
-    roadRenderer.addSegment(segment)
-    clearPreview()
-    if (editorStore.continuousDrawing) {
-      roadStore.startDrawing(ctx.mode, point, found.id)
+    if (ctx.mode === 'CURVE' && !curveEndPoint.value) {
+      // CURVE step 2: set endpoint, then mouse controls the Bezier handle
+      const found = findOrCreateNode(point)
+      if (found.id === ctx.startNodeId) return
+      if (found.created) {
+        roadStore.addNode(found.node)
+        roadRenderer.addNode(found.node)
+      }
+      curveEndPoint.value = point
+      curveEndNodeId.value = found.id
+      curveEndNodeCreated.value = found.created
+      curveEndNode.value = found.node
+    } else if (ctx.mode === 'CURVE' && curveEndPoint.value) {
+      // CURVE step 3: set control point and create the curved segment
+      const startNode = roadStore.getNode(ctx.startNodeId)
+      if (!startNode) return
+      const profile = getProfileById(editorStore.activeProfileId)
+      const curveCenterLine = buildQuadraticCenterLine(
+        ctx.startPoint!,
+        point,
+        curveEndPoint.value,
+        32,
+      )
+      const elevation = {
+        startZ: ctx.startElevation,
+        endZ: ctx.endElevation,
+        mode: ctx.currentElevationMode,
+      }
+      const segment: RoadSegment = createSegmentFromPoints({
+        id: genId(),
+        startNodeId: ctx.startNodeId,
+        endNodeId: curveEndNodeId.value!,
+        centerLine: curveCenterLine,
+        profile,
+        elevation,
+        isCurved: true,
+        meshData: await buildRoadMesh(curveCenterLine, profile, elevation.startZ),
+      })
+      if (!isCurrentHistorySession(sessionId)) return
+      const cmd = new AddSegmentCommand(segment, startNode, curveEndNode.value!, true, curveEndNodeCreated.value)
+      await executeHistoryCommand(cmd, sessionId)
+      if (!isCurrentHistorySession(sessionId)) return
+      roadRenderer.addSegment(segment)
+      clearPreview()
+      resetCurveState()
+      if (editorStore.continuousDrawing) {
+        roadStore.startDrawing(ctx.mode, curveEndPoint.value, curveEndNodeId.value)
+      } else {
+        roadStore.cancelDrawing()
+      }
     } else {
-      roadStore.cancelDrawing()
+      // STRAIGHT mode: two-click create segment
+      const found = findOrCreateNode(point)
+      if (found.id === ctx.startNodeId) return
+      const startNode = roadStore.getNode(ctx.startNodeId)
+      if (!startNode) return
+      if (found.created) {
+        roadStore.addNode(found.node)
+        roadRenderer.addNode(found.node)
+      }
+      const profile = getProfileById(editorStore.activeProfileId)
+      const centerLine = [startNode.position, point]
+      const elevation = {
+        startZ: roadStore.drawingContext.startElevation,
+        endZ: roadStore.drawingContext.endElevation,
+        mode: roadStore.drawingContext.currentElevationMode,
+      }
+      const segment: RoadSegment = createSegmentFromPoints({
+        id: genId(),
+        startNodeId: ctx.startNodeId,
+        endNodeId: found.id,
+        centerLine,
+        profile,
+        elevation,
+        isCurved: false,
+        meshData: await buildRoadMesh(centerLine, profile, elevation.startZ),
+      })
+      if (!isCurrentHistorySession(sessionId)) return
+      const cmd = new AddSegmentCommand(segment, startNode, found.node, false, found.created)
+      await executeHistoryCommand(cmd, sessionId)
+      if (!isCurrentHistorySession(sessionId)) return
+      roadRenderer.addSegment(segment)
+      clearPreview()
+      if (editorStore.continuousDrawing) {
+        roadStore.startDrawing(ctx.mode, point, found.id)
+      } else {
+        roadStore.cancelDrawing()
+      }
     }
   }
+}
+
+function resetCurveState(): void {
+  curveEndPoint.value = null
+  curveEndNodeId.value = null
+  curveEndNodeCreated.value = false
+  curveEndNode.value = null
 }
 
 function pickSceneObject(event: MouseEvent): { segmentId?: string; nodeId?: string } | null {
@@ -885,9 +1176,12 @@ function syncRendererWithStore(): void {
 function onContextMenu(event: MouseEvent): void {
   event.preventDefault()
   roadStore.cancelDrawing()
+  resetCurveState()
   clearPreview()
   clearLaneConnectorState()
 }
+
+const ELEVATION_STEP = 1
 
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
@@ -899,6 +1193,7 @@ function onKeyDown(event: KeyboardEvent): void {
       dragStartNodePos.value = null
     }
     roadStore.cancelDrawing()
+    resetCurveState()
     clearPreview()
     clearLaneConnectorState()
     arrowPickerVisible.value = false
@@ -920,6 +1215,31 @@ function onKeyDown(event: KeyboardEvent): void {
     void historyStack.redo(sessionId).catch((err: unknown) => {
       editorStore.setError(err instanceof Error ? err.message : '重做失败')
     })
+  } else if (event.key === 'F1') {
+    event.preventDefault()
+    roadStore.setElevationMode('GROUND')
+  } else if (event.key === 'F2') {
+    event.preventDefault()
+    roadStore.setElevationMode('BRIDGE')
+  } else if (event.key === 'F3') {
+    event.preventDefault()
+    roadStore.setElevationMode('TUNNEL')
+  } else if (event.ctrlKey && event.shiftKey && (event.key === 'a' || event.key === 'A')) {
+    event.preventDefault()
+    roadStore.setElevationMode('ANARCHY')
+  } else if (event.key === 'PageUp' && editorStore.activeTool === 'ROAD_DRAW') {
+    event.preventDefault()
+    const ctx = roadStore.drawingContext
+    const newEndZ = (ctx.endElevation ?? 0) + ELEVATION_STEP
+    roadStore.updatePreview(ctx.previewEndPoint ?? ctx.startPoint ?? { x: 0, y: 0 }, ctx.controlPoint, newEndZ)
+  } else if (event.key === 'PageDown' && editorStore.activeTool === 'ROAD_DRAW') {
+    event.preventDefault()
+    const ctx = roadStore.drawingContext
+    const newEndZ = (ctx.endElevation ?? 0) - ELEVATION_STEP
+    roadStore.updatePreview(ctx.previewEndPoint ?? ctx.startPoint ?? { x: 0, y: 0 }, ctx.controlPoint, newEndZ)
+  } else if ((event.key === 'c' || event.key === 'C') && editorStore.activeTool === 'ROAD_DRAW') {
+    event.preventDefault()
+    roadStore.setDrawingMode(roadStore.drawingContext.mode === 'CURVE' ? 'STRAIGHT' : 'CURVE')
   }
 }
 

@@ -40,6 +40,16 @@
         <input type="checkbox" :checked="editor.continuousDrawing" @change="editor.toggleContinuousDrawing()" />
         连续绘制
       </label>
+      <div v-if="editor.activeTool === 'ROAD_DRAW'" class="draw-mode-group">
+        <button
+          v-for="m in drawModes"
+          :key="m.id"
+          class="draw-mode-btn"
+          :class="{ active: roadStore.drawingContext.mode === m.id }"
+          :title="m.title"
+          @click="roadStore.setDrawingMode(m.id)"
+        >{{ m.label }}</button>
+      </div>
     </div>
 
     <div class="toolbar-section view-mode">
@@ -109,6 +119,12 @@ const viewModes: ViewModeDef[] = [
   { id: 'EDIT', label: '编辑' },
   { id: 'SIMULATION', label: '仿真' },
   { id: 'EVALUATION', label: '评估' },
+]
+
+interface DrawModeDef { id: 'STRAIGHT' | 'CURVE' | 'FREE'; label: string; title: string }
+const drawModes: DrawModeDef[] = [
+  { id: 'STRAIGHT', label: '直线', title: '直线绘路' },
+  { id: 'CURVE', label: '曲线', title: '二次贝塞尔曲线绘路（三点）' },
 ]
 
 async function onUndo(): Promise<void> {
@@ -216,6 +232,15 @@ function onExit(): void {
 .icon-btn:hover:not(:disabled) { background: #313847; }
 .icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .snap-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #aab2bf; cursor: pointer; }
+.draw-mode-group { display: flex; gap: 0; }
+.draw-mode-btn {
+  padding: 3px 8px; font-size: 11px;
+  background: #1d2129; border: 1px solid #383e4a;
+  color: #aab2bf; cursor: pointer;
+}
+.draw-mode-btn:first-child { border-radius: 3px 0 0 3px; }
+.draw-mode-btn:last-child { border-radius: 0 3px 3px 0; }
+.draw-mode-btn.active { background: #2c5d99; color: #fff; border-color: #4a8cd0; }
 .mode-btn {
   padding: 5px 12px;
   background: #1d2129; border: 1px solid #383e4a; color: #c8cdd5;

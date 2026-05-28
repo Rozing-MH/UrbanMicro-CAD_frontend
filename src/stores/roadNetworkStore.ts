@@ -297,13 +297,14 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     }
   }
 
-  function updatePreview(endPoint: Point2D, controlPoint: Point2D | null = null): void {
+  function updatePreview(endPoint: Point2D, controlPoint: Point2D | null = null, endElevation?: number): void {
     if (drawingContext.value.state !== 'DRAWING' && drawingContext.value.state !== 'PREVIEW') return
     drawingContext.value = {
       ...drawingContext.value,
       state: 'PREVIEW',
       previewEndPoint: endPoint,
       controlPoint,
+      ...(endElevation !== undefined ? { endElevation } : {}),
     }
   }
 
