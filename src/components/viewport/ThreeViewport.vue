@@ -51,7 +51,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, type Ref } from 'vue'
 import * as THREE from 'three'
 import { useThreeRenderer } from '@/composables/useThreeRenderer'
-import { useRoadRenderer } from '@/composables/useRoadRenderer'
+import { useRoadRenderer, type LampState } from '@/composables/useRoadRenderer'
 import { useVehicleRenderer } from '@/composables/useVehicleRenderer'
 import { useCameraControls } from '@/composables/useCameraControls'
 import { useGizmoControls } from '@/composables/useGizmoControls'
@@ -1933,6 +1933,7 @@ function syncRendererWithStore(): void {
   }
   for (const seg of roadStore.segments.values()) roadRenderer.addSegment(seg)
   for (const node of roadStore.nodes.values()) roadRenderer.addNode(node)
+  updateTrafficLightRender()
 }
 
 function onContextMenu(event: MouseEvent): void {
@@ -2091,8 +2092,35 @@ watch(
 
 watch(
   () => trafficRuleStore.ruleVersion,
-  () => updateLaneConnectorMeshes(),
+  () => {
+    updateLaneConnectorMeshes()
+    updateTrafficLightRender()
+  },
 )
+
+/** Sync traffic light 3D models with store data */
+function updateTrafficLightRender(): void {
+  // Remove lights for nodes that no longer have TRAFFIC_LIGHT controlMode
+  for (const [nodeId] of roadRenderer.trafficLightGroups) {
+    const node = roadStore.getNode(nodeId)
+    if (!node || node.controlMode !== 'TRAFFIC_LIGHT') {
+      roadRenderer.removeTrafficLight(nodeId)
+    }
+  }
+  // Add/update lights for TRAFFIC_LIGHT nodes
+  for (const light of trafficRuleStore.trafficLights.values()) {
+    const node = roadStore.getNode(light.nodeId)
+    if (!node || node.controlMode !== 'TRAFFIC_LIGHT') continue
+    if (!roadRenderer.trafficLightGroups.has(light.nodeId)) {
+      roadRenderer.addTrafficLight(light.nodeId, node.position, node.elevation)
+    }
+    // Determine lamp states from current step's greenLanes
+    const step = light.steps[light.currentStepIndex]
+    const hasGreen = step && step.greenLanes.length > 0
+    const lampStates: LampState[] = hasGreen ? ['OFF', 'OFF', 'GREEN'] : ['RED', 'OFF', 'OFF']
+    roadRenderer.updateTrafficLightLamps(light.nodeId, lampStates)
+  }
+}
 
 // Cross-section editor 3D preview: rebuild target segment mesh when profile changes
 watch(
@@ -2133,6 +2161,7 @@ onMounted(() => {
         simTickInFlight = true
         void simStore.tick().finally(() => {
           simTickInFlight = false
+          updateTrafficLightRender()
         })
       }
       const buf = simStore.getVehicleView()

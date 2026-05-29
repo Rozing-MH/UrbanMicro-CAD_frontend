@@ -3,11 +3,39 @@ import { type Ref } from 'vue'
 import type { RoadSegment, RoadNode, MeshData, Point2D } from '@/types/road-network'
 import { triangulatePolygon } from '@/adapters/DelaunayTriangulator'
 
+/** Traffic light lamp state for visual rendering */
+export type LampState = 'RED' | 'YELLOW' | 'GREEN' | 'OFF'
+
 export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
   const segmentMeshes: Map<string, THREE.Mesh> = new Map()
   const nodeMarkers: Map<string, THREE.Mesh> = new Map()
   const intersectionMeshes: Map<string, THREE.Mesh> = new Map()
   const previewLine: { line: THREE.Line | null } = { line: null }
+
+  // Traffic light 3D models keyed by nodeId
+  const trafficLightGroups: Map<string, THREE.Group> = new Map()
+
+  // Shared geometries for traffic lights
+  const poleGeometry = new THREE.CylinderGeometry(0.12, 0.12, 4, 8)
+  const housingGeometry = new THREE.BoxGeometry(0.5, 1.2, 0.35)
+  const lampGeometry = new THREE.CircleGeometry(0.12, 16)
+
+  // Materials
+  const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.6, roughness: 0.4 })
+  const housingMaterial = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.3, roughness: 0.5 })
+  const lampOffMaterial = new THREE.MeshBasicMaterial({ color: 0x333333 })
+  const lampRedMaterial = new THREE.MeshBasicMaterial({ color: 0xff2222 })
+  const lampYellowMaterial = new THREE.MeshBasicMaterial({ color: 0xffdd00 })
+  const lampGreenMaterial = new THREE.MeshBasicMaterial({ color: 0x00ee44 })
+
+  function getLampMaterial(state: LampState): THREE.MeshBasicMaterial {
+    switch (state) {
+      case 'RED': return lampRedMaterial
+      case 'YELLOW': return lampYellowMaterial
+      case 'GREEN': return lampGreenMaterial
+      default: return lampOffMaterial
+    }
+  }
 
   const roadMaterial = new THREE.MeshStandardMaterial({
     color: 0x2c2c2c,
@@ -216,6 +244,63 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
     }
   }
 
+  /** Add a 3D traffic light model at a node position */
+  function addTrafficLight(nodeId: string, position: Point2D, elevation: number): void {
+    if (!scene.value) return
+    removeTrafficLight(nodeId)
+    const group = new THREE.Group()
+    group.userData.nodeId = nodeId
+    // Pole
+    const pole = new THREE.Mesh(poleGeometry, poleMaterial)
+    pole.position.set(0, 2, 0)
+    group.add(pole)
+    // Housing
+    const housing = new THREE.Mesh(housingGeometry, housingMaterial)
+    housing.position.set(0, 4.6, 0)
+    group.add(housing)
+    // Three lamps: red (top), yellow (middle), green (bottom)
+    const lampOffsets = [5.0, 4.6, 4.2]
+    const lampInitialStates: LampState[] = ['RED', 'OFF', 'OFF']
+    for (let i = 0; i < 3; i++) {
+      const lamp = new THREE.Mesh(lampGeometry, getLampMaterial(lampInitialStates[i]))
+      lamp.position.set(0, lampOffsets[i], 0.18)
+      lamp.userData.isLamp = true
+      lamp.userData.lampIndex = i
+      group.add(lamp)
+    }
+    group.position.set(position.x, elevation, position.y)
+    scene.value.add(group)
+    trafficLightGroups.set(nodeId, group)
+  }
+
+  function removeTrafficLight(nodeId: string): void {
+    if (!scene.value) return
+    const existing = trafficLightGroups.get(nodeId)
+    if (existing) {
+      scene.value.remove(existing)
+      trafficLightGroups.delete(nodeId)
+    }
+  }
+
+  /** Update lamp states [red, yellow, green] */
+  function updateTrafficLightLamps(nodeId: string, states: LampState[]): void {
+    const group = trafficLightGroups.get(nodeId)
+    if (!group) return
+    let lampIdx = 0
+    group.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.userData.isLamp) {
+        if (lampIdx < states.length) {
+          child.material = getLampMaterial(states[lampIdx])
+          lampIdx++
+        }
+      }
+    })
+  }
+
+  function getTrafficLightGroup(nodeId: string): THREE.Group | undefined {
+    return trafficLightGroups.get(nodeId)
+  }
+
   function dispose(): void {
     if (!scene.value) return
     for (const mesh of segmentMeshes.values()) {
@@ -230,10 +315,23 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
       scene.value.remove(mesh)
       mesh.geometry.dispose()
     }
+    for (const group of trafficLightGroups.values()) {
+      scene.value.remove(group)
+    }
+    trafficLightGroups.clear()
     hidePreview()
     segmentMeshes.clear()
     nodeMarkers.clear()
     intersectionMeshes.clear()
+    poleGeometry.dispose()
+    housingGeometry.dispose()
+    lampGeometry.dispose()
+    poleMaterial.dispose()
+    housingMaterial.dispose()
+    lampOffMaterial.dispose()
+    lampRedMaterial.dispose()
+    lampYellowMaterial.dispose()
+    lampGreenMaterial.dispose()
   }
 
   return {
@@ -245,10 +343,15 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
     hidePreview,
     highlightSegment,
     updateIntersectionPolygon,
+    addTrafficLight,
+    removeTrafficLight,
+    updateTrafficLightLamps,
+    getTrafficLightGroup,
     dispose,
     segmentMeshes,
     nodeMarkers,
     intersectionMeshes,
     intersectionMaterial,
+    trafficLightGroups,
   }
 }
