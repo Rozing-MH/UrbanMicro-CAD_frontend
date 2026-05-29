@@ -20,3 +20,5 @@ export {
   UpdateTrafficLightCommand,
   UpgradeSegmentCommand,
 } from './roadCommands'
+export { MeasurementCommand } from './MeasurementCommand'
+export type { MeasurementResult } from './MeasurementCommand'

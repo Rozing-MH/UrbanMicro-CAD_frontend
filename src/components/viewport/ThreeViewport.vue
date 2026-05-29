@@ -83,6 +83,8 @@ import LaneArrowPicker from '@/components/panels/LaneArrowPicker.vue'
 import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection, ElevationMode, DrawingMode, AngleAnnotation } from '@/types'
 import { SLOPE_LIMITS } from '@/types/road-network'
 import { calculateAngleAnnotation, segmentDirectionAtNode } from '@/services/angleAnnotationService'
+import { MeasurementCommand } from '@/commands/MeasurementCommand'
+import type { MeasurementResult } from '@/commands/MeasurementCommand'
 import type { TurnRestriction as TurnRestrictionType } from '@/types/traffic-rule'
 
 const DEFAULT_PROFILE: CrossSectionProfile = {
@@ -362,6 +364,12 @@ const arrowSpriteMaterial = new THREE.SpriteMaterial({ color: 0xffffff, opacity:
 // Angle annotation state (FR1.9)
 let angleAnnotationGroup: THREE.Group | null = null
 
+// MEASURE tool state (FR1.9)
+const measureStartNodeId = ref<string | null>(null)
+const measureStartPos = ref<Point2D | null>(null)
+const measureStartElev = ref(0)
+const measurementMeshes: THREE.Group[] = [] // all active measurement visuals
+
 // Turn restriction picker state
 const trPickerVisible = ref(false)
 const trPickerPosition = ref({ x: 0, y: 0 })
@@ -599,6 +607,187 @@ function clearAngleAnnotations(): void {
     }
   })
   angleAnnotationGroup = null
+}
+
+// ============================================================
+// MEASURE Tool (FR1.9 两点测距)
+// ============================================================
+
+function addMeasurementVisual(result: MeasurementResult): void {
+  const scene = sceneRef.value
+  if (!scene) return
+
+  const group = new THREE.Group()
+  const E1 = result.fromElevation
+  const E2 = result.toElevation
+  const p1 = result.fromPosition
+  const p2 = result.toPosition
+
+  // Dashed line between the two points
+  const lineGeom = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(p1.x, E1 + 0.3, p1.y),
+    new THREE.Vector3(p2.x, E2 + 0.3, p2.y),
+  ])
+  const lineMat = new THREE.LineDashedMaterial({
+    color: 0x00ffcc,
+    dashSize: 0.8,
+    gapSize: 0.4,
+    transparent: true,
+    opacity: 0.9,
+  })
+  const line = new THREE.Line(lineGeom, lineMat)
+  line.computeLineDistances()
+  group.add(line)
+
+  // Distance label sprite at midpoint
+  const mx = (p1.x + p2.x) / 2
+  const mz = (p1.y + p2.y) / 2
+  const mE = (E1 + E2) / 2 + 0.3
+  const elevDiff = E2 - E1
+  const horizDist = Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2)
+  const slopePct = horizDist > 0.01 ? Math.abs(elevDiff / horizDist * 100) : 0
+  const label = createMeasurementSprite(`${result.distance.toFixed(1)}m | ${slopePct.toFixed(1)}%`)
+  label.position.set(mx, mE + 1.0, mz)
+  group.add(label)
+
+  // Small spheres at endpoints
+  const dotGeo = new THREE.SphereGeometry(0.25, 8, 8)
+  const dotMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc })
+  const dot1 = new THREE.Mesh(dotGeo, dotMat)
+  dot1.position.set(p1.x, E1 + 0.3, p1.y)
+  group.add(dot1)
+  const dot2 = new THREE.Mesh(dotGeo, dotMat.clone())
+  dot2.position.set(p2.x, E2 + 0.3, p2.y)
+  group.add(dot2)
+
+  scene.add(group)
+  measurementMeshes.push(group)
+}
+
+function removeMeasurementVisual(result: MeasurementResult): void {
+  // Remove the last measurement visual that matches (FIFO)
+  const scene = sceneRef.value
+  const idx = measurementMeshes.length - 1
+  if (idx < 0) return
+  const group = measurementMeshes[idx]
+  if (scene) scene.remove(group)
+  group.traverse((child) => {
+    if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+      child.geometry.dispose()
+      if (child.material instanceof THREE.Material) child.material.dispose()
+    }
+    if (child instanceof THREE.Sprite) {
+      if (child.material instanceof THREE.SpriteMaterial && child.material.map) {
+        child.material.map.dispose()
+      }
+      child.material.dispose()
+    }
+  })
+  measurementMeshes.splice(idx, 1)
+}
+
+function clearMeasureState(): void {
+  measureStartNodeId.value = null
+  measureStartPos.value = null
+  measureStartElev.value = 0
+}
+
+function clearAllMeasurements(): void {
+  const scene = sceneRef.value
+  for (const group of measurementMeshes) {
+    if (scene) scene.remove(group)
+    group.traverse((child) => {
+      if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+        child.geometry.dispose()
+        if (child.material instanceof THREE.Material) child.material.dispose()
+      }
+      if (child instanceof THREE.Sprite) {
+        if (child.material instanceof THREE.SpriteMaterial && child.material.map) {
+          child.material.map.dispose()
+        }
+        child.material.dispose()
+      }
+    })
+  }
+  measurementMeshes.length = 0
+  clearMeasureState()
+}
+
+async function handleMeasure(event: MouseEvent, sessionId: HistorySessionId): Promise<void> {
+  const picked = pickSceneObject(event)
+  if (!picked?.nodeId) {
+    // Clicked empty space — treat as world point if no start set
+    if (!measureStartNodeId.value) return
+    // Use snapped world position as endpoint
+    const world = screenToWorld(event)
+    if (!world) return
+    const endPos = world
+    const startNode = measureStartNodeId.value ? roadStore.getNode(measureStartNodeId.value) : null
+    const E1 = startNode?.elevation ?? measureStartElev.value
+    const dx = endPos.x - (measureStartPos.value?.x ?? 0)
+    const dy = endPos.y - (measureStartPos.value?.y ?? 0)
+    const distance = Math.sqrt(dx * dx + dy * dy)
+    const result: MeasurementResult = {
+      fromNodeId: measureStartNodeId.value,
+      toNodeId: null,
+      fromPosition: measureStartPos.value ?? endPos,
+      toPosition: endPos,
+      distance,
+      fromElevation: E1,
+      toElevation: 0,
+    }
+    await executeHistoryCommand(
+      new MeasurementCommand(result, addMeasurementVisual, removeMeasurementVisual),
+      sessionId,
+    )
+    clearMeasureState()
+    return
+  }
+
+  const nodeId = picked.nodeId
+  const node = roadStore.getNode(nodeId)
+  if (!node) return
+
+  if (!measureStartNodeId.value) {
+    // First click: set start point
+    measureStartNodeId.value = nodeId
+    measureStartPos.value = { x: node.position.x, y: node.position.y }
+    measureStartElev.value = node.elevation
+    editorStore.showNotification({ type: 'info', message: '已选起点节点，请点击终点' })
+    return
+  }
+
+  // Second click: compute and display distance
+  if (nodeId === measureStartNodeId.value) {
+    editorStore.showNotification({ type: 'warning', message: '起点与终点相同，请选择不同节点' })
+    return
+  }
+
+  const startNode = roadStore.getNode(measureStartNodeId.value)
+  const sp = measureStartPos.value ?? node.position
+  const E1 = startNode?.elevation ?? measureStartElev.value
+  const E2 = node.elevation
+  const dx = node.position.x - sp.x
+  const dy = node.position.y - sp.y
+  const horizDist = Math.sqrt(dx * dx + dy * dy)
+  const dE = E2 - E1
+  const distance = Math.sqrt(dx * dx + dy * dy + dE * dE)
+
+  const result: MeasurementResult = {
+    fromNodeId: measureStartNodeId.value,
+    toNodeId: nodeId,
+    fromPosition: sp,
+    toPosition: { x: node.position.x, y: node.position.y },
+    distance,
+    fromElevation: E1,
+    toElevation: E2,
+  }
+
+  await executeHistoryCommand(
+    new MeasurementCommand(result, addMeasurementVisual, removeMeasurementVisual),
+    sessionId,
+  )
+  clearMeasureState()
 }
 
 function drawPreviewRoad(
@@ -1458,6 +1647,7 @@ async function onPointerDown(event: MouseEvent): Promise<void> {
   else if (editorStore.activeTool === 'LANE_ARROW') handleLaneArrow(event, sessionId)
   else if (editorStore.activeTool === 'TURN_RESTRICTION') handleTurnRestriction(event, sessionId)
   else if (editorStore.activeTool === 'ROAD_EDIT') handleRoadEdit(event)
+  else if (editorStore.activeTool === 'MEASURE') await handleMeasure(event, sessionId)
 }
 
 function syncRendererWithStore(): void {
@@ -1477,6 +1667,7 @@ function onContextMenu(event: MouseEvent): void {
   resetCurveState()
   clearPreview()
   clearLaneConnectorState()
+  clearMeasureState()
 }
 
 const ELEVATION_STEP = 1
@@ -1498,6 +1689,7 @@ function onKeyDown(event: KeyboardEvent): void {
     resetCurveState()
     clearPreview()
     clearLaneConnectorState()
+    clearMeasureState()
     arrowPickerVisible.value = false
     trPickerVisible.value = false
   } else if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
@@ -1675,6 +1867,7 @@ onBeforeUnmount(() => {
   guideLineMaterial.dispose()
   clearLaneConnectorState()
   clearAngleAnnotations()
+  clearAllMeasurements()
   const scene = sceneRef.value
   if (scene) {
     for (const [, line] of laneConnectorMeshes) {
