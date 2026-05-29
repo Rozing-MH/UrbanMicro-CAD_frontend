@@ -69,6 +69,7 @@ import {
   CreateParallelSegmentCommand,
   DeleteSegmentCommand,
   MoveNodeCommand,
+  MoveVertexCommand,
   SetLaneArrowCommand,
   SetLaneConnectorCommand,
   SetTurnRestrictionCommand,
@@ -167,6 +168,7 @@ const hint = computed(() => {
     case 'PARALLEL_ROAD': return '点击路段，按当前断面宽度生成平行路'
     case 'BULLDOZER': return '点击路段删除，支持撤销/重做'
     case 'ROAD_EDIT': return '左键选择节点拖动调整'
+    case 'NODE_ADJUST': return isDraggingVertex.value ? '拖拽顶点调整边界，Esc 取消' : '点击选择路口，拖拽顶点调整边界形状'
     case 'TRAFFIC_LIGHT': return '点击交叉口添加信号灯'
     case 'LANE_CONNECTOR': return selectedLaneAnchor.value ? '点击目标车道完成连接，Esc 取消' : '点击源车道锚点开始连接'
     case 'LANE_ARROW': return '点击车道锚点设置转向箭头'
@@ -318,6 +320,18 @@ const laneAnchorGeometry = new THREE.SphereGeometry(0.3, 8, 8)
 const laneAnchorMaterial = new THREE.MeshBasicMaterial({ color: 0x41c9ff })
 const selectedLaneAnchorMaterial = new THREE.MeshBasicMaterial({ color: 0xffd166 })
 const laneConnectorMaterial = new THREE.LineBasicMaterial({ color: 0xffb020 })
+
+// Node adjust (FR2.1) — polygon boundary vertex editing
+const nodeAdjustVertexGeometry = new THREE.SphereGeometry(0.35, 10, 10)
+const nodeAdjustVertexMaterial = new THREE.MeshBasicMaterial({ color: 0xff6644 })
+const nodeAdjustSelectedVertexMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 })
+const nodeAdjustOutlineMaterial = new THREE.LineBasicMaterial({ color: 0xff6644, transparent: true, opacity: 0.7 })
+const nodeAdjustVertexMeshes = new Map<string, THREE.Mesh>() // key: `${nodeId}:${vertexIndex}`
+const nodeAdjustOutlineMeshes = new Map<string, THREE.Line>() // key: nodeId
+const isDraggingVertex = ref(false)
+const dragVertexNodeId = ref<string | null>(null)
+const dragVertexIndex = ref<number>(-1)
+const dragVertexStartPos = ref<Point2D | null>(null)
 
 // Road preview materials (shared, not disposed per-frame)
 const previewSurfaceMaterial = new THREE.MeshBasicMaterial({
@@ -961,6 +975,148 @@ function recalculateBoundaryForNode(nodeId: string): void {
   roadRenderer.updateIntersectionPolygon(nodeId, boundary)
 }
 
+// ============================================================
+// Node Adjust (FR2.1) — polygon boundary vertex editing
+// ============================================================
+
+function updateNodeAdjustVisuals(): void {
+  const scene = sceneRef.value
+  if (!scene) return
+
+  // Remove existing vertex markers and outlines
+  for (const [, mesh] of nodeAdjustVertexMeshes) {
+    scene.remove(mesh)
+  }
+  nodeAdjustVertexMeshes.clear()
+  for (const [, line] of nodeAdjustOutlineMeshes) {
+    scene.remove(line)
+    line.geometry.dispose()
+  }
+  nodeAdjustOutlineMeshes.clear()
+
+  if (editorStore.activeTool !== 'NODE_ADJUST') return
+
+  // Show vertex markers and outlines for all nodes that have polygon vertices
+  for (const node of roadStore.nodes.values()) {
+    if (node.polygonVertices.length < 3) continue
+    const isSelected = roadStore.selectedNodeIds.has(node.id)
+    const elev = node.elevation + 0.05
+
+    // Draw polygon outline
+    const outlinePoints = node.polygonVertices.map(
+      (v) => new THREE.Vector3(v.x, elev, v.y),
+    )
+    outlinePoints.push(outlinePoints[0].clone()) // close the loop
+    const outlineGeo = new THREE.BufferGeometry().setFromPoints(outlinePoints)
+    const outlineLine = new THREE.Line(outlineGeo, nodeAdjustOutlineMaterial)
+    outlineLine.userData.nodeId = node.id
+    scene.add(outlineLine)
+    nodeAdjustOutlineMeshes.set(node.id, outlineLine)
+
+    // Draw vertex markers (only for selected node to reduce clutter)
+    if (isSelected) {
+      for (let i = 0; i < node.polygonVertices.length; i++) {
+        const v = node.polygonVertices[i]
+        const mesh = new THREE.Mesh(nodeAdjustVertexGeometry, nodeAdjustVertexMaterial)
+        mesh.position.set(v.x, elev, v.y)
+        mesh.userData.nodeId = node.id
+        mesh.userData.vertexIndex = i
+        scene.add(mesh)
+        nodeAdjustVertexMeshes.set(`${node.id}:${i}`, mesh)
+      }
+    }
+  }
+}
+
+function clearNodeAdjustState(): void {
+  const scene = sceneRef.value
+  if (scene) {
+    for (const [, mesh] of nodeAdjustVertexMeshes) {
+      scene.remove(mesh)
+    }
+    for (const [, line] of nodeAdjustOutlineMeshes) {
+      scene.remove(line)
+      line.geometry.dispose()
+    }
+  }
+  nodeAdjustVertexMeshes.clear()
+  nodeAdjustOutlineMeshes.clear()
+  isDraggingVertex.value = false
+  dragVertexNodeId.value = null
+  dragVertexIndex.value = -1
+  dragVertexStartPos.value = null
+}
+
+function pickNodeAdjustVertex(event: MouseEvent): { nodeId: string; vertexIndex: number } | null {
+  const camera = cameraRef.value
+  if (!camera || !containerRef.value) return null
+  const rect = containerRef.value.getBoundingClientRect()
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+  raycaster.setFromCamera(pointer, camera)
+  const meshes = Array.from(nodeAdjustVertexMeshes.values())
+  const intersects = raycaster.intersectObjects(meshes, false)
+  if (intersects.length > 0) {
+    const obj = intersects[0].object
+    return {
+      nodeId: obj.userData.nodeId as string,
+      vertexIndex: obj.userData.vertexIndex as number,
+    }
+  }
+  return null
+}
+
+function handleNodeAdjust(event: MouseEvent): void {
+  // First try to pick a vertex marker (for dragging)
+  const vertexPick = pickNodeAdjustVertex(event)
+  if (vertexPick) {
+    const node = roadStore.getNode(vertexPick.nodeId)
+    if (!node) return
+    isDraggingVertex.value = true
+    dragVertexNodeId.value = vertexPick.nodeId
+    dragVertexIndex.value = vertexPick.vertexIndex
+    const v = node.polygonVertices[vertexPick.vertexIndex]
+    dragVertexStartPos.value = { x: v.x, y: v.y }
+    // Highlight selected vertex
+    const mesh = nodeAdjustVertexMeshes.get(`${vertexPick.nodeId}:${vertexPick.vertexIndex}`)
+    if (mesh) mesh.material = nodeAdjustSelectedVertexMaterial
+    cameraControls.state.isDragging = false
+    cameraControls.state.isOrbiting = false
+    return
+  }
+
+  // Otherwise, try to pick a node (for selection)
+  const picked = pickSceneObject(event)
+  if (picked?.nodeId) {
+    roadStore.selectNode(picked.nodeId)
+    updateNodeAdjustVisuals()
+    return
+  }
+  // Click on empty space — clear selection
+  roadStore.clearSelection()
+  updateNodeAdjustVisuals()
+}
+
+function updateNodeAdjustOutline(nodeId: string, node: RoadNode): void {
+  const scene = sceneRef.value
+  if (!scene) return
+  const existingLine = nodeAdjustOutlineMeshes.get(nodeId)
+  if (existingLine) {
+    scene.remove(existingLine)
+    existingLine.geometry.dispose()
+  }
+  const elev = node.elevation + 0.05
+  const outlinePoints = node.polygonVertices.map(
+    (v) => new THREE.Vector3(v.x, elev, v.y),
+  )
+  outlinePoints.push(outlinePoints[0].clone())
+  const outlineGeo = new THREE.BufferGeometry().setFromPoints(outlinePoints)
+  const outlineLine = new THREE.Line(outlineGeo, nodeAdjustOutlineMaterial)
+  outlineLine.userData.nodeId = nodeId
+  scene.add(outlineLine)
+  nodeAdjustOutlineMeshes.set(nodeId, outlineLine)
+}
+
 function clearPreview(): void {
   const scene = sceneRef.value
   if (previewGroup && scene) {
@@ -986,6 +1142,24 @@ function onPointerMove(event: MouseEvent): void {
   if (isDragging.value && dragNodeId.value) {
     roadStore.updateNode(dragNodeId.value, { position: { x: world.x, y: world.y } })
     rebuildSegmentsForNode(dragNodeId.value)
+    return
+  }
+  // Node adjust vertex drag — update vertex position in real time
+  if (isDraggingVertex.value && dragVertexNodeId.value && dragVertexIndex.value >= 0) {
+    const node = roadStore.getNode(dragVertexNodeId.value)
+    if (!node) return
+    const updatedVertices = node.polygonVertices.map((v, i) =>
+      i === dragVertexIndex.value ? { x: world.x, y: world.y } : v,
+    )
+    roadStore.updateNode(dragVertexNodeId.value, { polygonVertices: updatedVertices })
+    // Update vertex marker position
+    const mesh = nodeAdjustVertexMeshes.get(`${dragVertexNodeId.value}:${dragVertexIndex.value}`)
+    if (mesh) mesh.position.set(world.x, node.elevation + 0.05, world.y)
+    // Update outline
+    const node2 = roadStore.getNode(dragVertexNodeId.value)
+    if (node2) updateNodeAdjustOutline(dragVertexNodeId.value, node2)
+    // Update intersection polygon mesh
+    roadRenderer.updateIntersectionPolygon(dragVertexNodeId.value, updatedVertices)
     return
   }
   const snapped = snapPoint(world)
@@ -1229,6 +1403,44 @@ function rebuildSegmentsForNode(nodeId: string): void {
 }
 
 function onPointerUp(): void {
+  // Node adjust vertex drag commit
+  if (isDraggingVertex.value) {
+    const nodeId = dragVertexNodeId.value
+    const vertexIdx = dragVertexIndex.value
+    const fromPos = dragVertexStartPos.value
+    if (nodeId && vertexIdx >= 0 && fromPos) {
+      const node = roadStore.getNode(nodeId)
+      if (node) {
+        const curVertex = node.polygonVertices[vertexIdx]
+        if (curVertex && (curVertex.x !== fromPos.x || curVertex.y !== fromPos.y)) {
+          // Restore original position, then execute command (same pattern as MoveNodeCommand)
+          const oldVertices = node.polygonVertices.map((v, i) =>
+            i === vertexIdx ? { x: fromPos.x, y: fromPos.y } : { ...v },
+          )
+          roadStore.updateNode(nodeId, { polygonVertices: oldVertices })
+          const sessionId = editorStore.historySessionId
+          if (sessionId !== null) {
+            void historyStack.execute(
+              new MoveVertexCommand(nodeId, vertexIdx, fromPos, { x: curVertex.x, y: curVertex.y }),
+              sessionId,
+            ).catch(() => {})
+          }
+        }
+      }
+    }
+    // Reset vertex material
+    if (nodeId && vertexIdx >= 0) {
+      const mesh = nodeAdjustVertexMeshes.get(`${nodeId}:${vertexIdx}`)
+      if (mesh) mesh.material = nodeAdjustVertexMaterial
+    }
+    isDraggingVertex.value = false
+    dragVertexNodeId.value = null
+    dragVertexIndex.value = -1
+    dragVertexStartPos.value = null
+    // Refresh visuals to reflect final state
+    updateNodeAdjustVisuals()
+    return
+  }
   if (!isDragging.value) return
   const nodeId = dragNodeId.value
   const fromPos = dragStartNodePos.value
@@ -1647,6 +1859,7 @@ async function onPointerDown(event: MouseEvent): Promise<void> {
   else if (editorStore.activeTool === 'LANE_ARROW') handleLaneArrow(event, sessionId)
   else if (editorStore.activeTool === 'TURN_RESTRICTION') handleTurnRestriction(event, sessionId)
   else if (editorStore.activeTool === 'ROAD_EDIT') handleRoadEdit(event)
+  else if (editorStore.activeTool === 'NODE_ADJUST') handleNodeAdjust(event)
   else if (editorStore.activeTool === 'MEASURE') await handleMeasure(event, sessionId)
 }
 
@@ -1668,6 +1881,7 @@ function onContextMenu(event: MouseEvent): void {
   clearPreview()
   clearLaneConnectorState()
   clearMeasureState()
+  clearNodeAdjustState()
 }
 
 const ELEVATION_STEP = 1
@@ -1684,6 +1898,23 @@ function onKeyDown(event: KeyboardEvent): void {
       isDragging.value = false
       dragNodeId.value = null
       dragStartNodePos.value = null
+    }
+    if (isDraggingVertex.value && dragVertexNodeId.value && dragVertexIndex.value >= 0 && dragVertexStartPos.value) {
+      // Restore vertex to original position
+      const node = roadStore.getNode(dragVertexNodeId.value)
+      const startPos = dragVertexStartPos.value
+      if (node && startPos) {
+        const restored = node.polygonVertices.map((v, i) =>
+          i === dragVertexIndex.value ? { ...startPos } : v,
+        )
+        roadStore.updateNode(dragVertexNodeId.value, { polygonVertices: restored })
+        roadRenderer.updateIntersectionPolygon(dragVertexNodeId.value, restored)
+      }
+      isDraggingVertex.value = false
+      dragVertexNodeId.value = null
+      dragVertexIndex.value = -1
+      dragVertexStartPos.value = null
+      updateNodeAdjustVisuals()
     }
     roadStore.cancelDrawing()
     resetCurveState()
@@ -1770,13 +2001,19 @@ watch(
   () => {
     syncRendererWithStore()
     updateAngleAnnotations()
+    if (editorStore.activeTool === 'NODE_ADJUST') {
+      updateNodeAdjustVisuals()
+    }
   },
 )
 
 // Update angle annotations when node selection changes
 watch(
   () => roadStore.selectedNodeIds,
-  () => updateAngleAnnotations(),
+  () => {
+    updateAngleAnnotations()
+    updateNodeAdjustVisuals()
+  },
   { deep: true },
 )
 
@@ -1784,8 +2021,10 @@ watch(
   () => [editorStore.activeTool, roadStore.selectedSegmentIds.size],
   () => {
     if (editorStore.activeTool !== 'LANE_CONNECTOR') clearLaneConnectorState()
+    if (editorStore.activeTool !== 'NODE_ADJUST') clearNodeAdjustState()
     updateLaneAnchorMeshes()
     updateLaneArrowMeshes()
+    updateNodeAdjustVisuals()
   },
 )
 
@@ -1866,6 +2105,7 @@ onBeforeUnmount(() => {
   snapHighlightMaterial.dispose()
   guideLineMaterial.dispose()
   clearLaneConnectorState()
+  clearNodeAdjustState()
   clearAngleAnnotations()
   clearAllMeasurements()
   const scene = sceneRef.value
@@ -1880,6 +2120,10 @@ onBeforeUnmount(() => {
   laneAnchorMaterial.dispose()
   selectedLaneAnchorMaterial.dispose()
   laneConnectorMaterial.dispose()
+  nodeAdjustVertexGeometry.dispose()
+  nodeAdjustVertexMaterial.dispose()
+  nodeAdjustSelectedVertexMaterial.dispose()
+  nodeAdjustOutlineMaterial.dispose()
   arrowSpriteMaterial.dispose()
   for (const [, sprite] of laneArrowMeshes) {
     sprite.material.map?.dispose()

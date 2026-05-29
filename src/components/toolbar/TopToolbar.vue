@@ -108,6 +108,7 @@ const toolList: ToolDef[] = [
   { id: 'PARALLEL_ROAD',   icon: '∥', label: '平行',   title: '平行路' },
   { id: 'BULLDOZER',       icon: '⌫', label: '删除',   title: '推土机' },
   { id: 'ROAD_EDIT',       icon: '◆', label: '编辑',   title: '编辑节点' },
+  { id: 'NODE_ADJUST',     icon: '⬡', label: '边界',   title: '路口边界编辑' },
   { id: 'TRAFFIC_LIGHT',   icon: '🚦', label: '信号灯', title: '放置信号灯' },
   { id: 'LANE_CONNECTOR',  icon: '↪', label: '车道',   title: '车道连接' },
   { id: 'LANE_RESTRICTION', icon: '⊘', label: '限制',   title: '车道限制与标线' },

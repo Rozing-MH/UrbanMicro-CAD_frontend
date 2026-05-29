@@ -6,6 +6,7 @@ export {
   CreateParallelSegmentCommand,
   DeleteSegmentCommand,
   MoveNodeCommand,
+  MoveVertexCommand,
   RemoveSignalStepCommand,
   SetCrosswalkCommand,
   SetCrossSectionCommand,

@@ -9,6 +9,7 @@ export type ToolMode =
   | 'BULLDOZER'
   | 'PARALLEL_ROAD'
   | 'ROAD_EDIT'
+  | 'NODE_ADJUST'
   | 'TRAFFIC_LIGHT'
   | 'LANE_CONNECTOR'
   | 'LANE_RESTRICTION'

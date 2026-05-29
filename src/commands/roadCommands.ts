@@ -700,6 +700,47 @@ export class MoveNodeCommand implements ICommand {
   }
 }
 
+export class MoveVertexCommand implements ICommand {
+  readonly timestamp = Date.now()
+
+  constructor(
+    private nodeId: string,
+    private vertexIndex: number,
+    private fromPosition: { x: number; y: number },
+    private toPosition: { x: number; y: number },
+  ) {}
+
+  execute(): void {
+    const store = useRoadNetworkStore()
+    const node = store.getNode(this.nodeId)
+    if (!node) throw new Error('无法移动顶点：目标节点不存在')
+    if (this.vertexIndex < 0 || this.vertexIndex >= node.polygonVertices.length) {
+      throw new Error('无法移动顶点：顶点索引越界')
+    }
+    const updatedVertices = node.polygonVertices.map((v, i) =>
+      i === this.vertexIndex ? { x: this.toPosition.x, y: this.toPosition.y } : { ...v },
+    )
+    store.updateNode(this.nodeId, { polygonVertices: updatedVertices })
+  }
+
+  undo(): void {
+    const store = useRoadNetworkStore()
+    const node = store.getNode(this.nodeId)
+    if (!node) return
+    if (this.vertexIndex < 0 || this.vertexIndex >= node.polygonVertices.length) {
+      return
+    }
+    const updatedVertices = node.polygonVertices.map((v, i) =>
+      i === this.vertexIndex ? { x: this.fromPosition.x, y: this.fromPosition.y } : { ...v },
+    )
+    store.updateNode(this.nodeId, { polygonVertices: updatedVertices })
+  }
+
+  getDescription(): string {
+    return `Move polygon vertex ${this.vertexIndex} of node ${this.nodeId}`
+  }
+}
+
 type NodeControlMode = RoadNode['controlMode']
 
 export class SetNodeControlModeCommand implements ICommand {
