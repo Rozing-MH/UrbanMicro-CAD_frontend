@@ -18,6 +18,18 @@
     </div>
 
     <div v-if="activeTab === 'sections'" class="panel-content">
+      <div class="editor-toggle-row">
+        <button class="toggle-editor-btn" @click="showEditor = !showEditor">
+          {{ showEditor ? '收起编辑器' : '自定义断面' }}
+        </button>
+      </div>
+      <CrossSectionEditor
+        v-if="showEditor"
+        :initial-profile="editor.activeProfileId ? getProfileById(editor.activeProfileId) : null"
+        @close="showEditor = false"
+        @save="onSaveCustomProfile"
+        @apply="onApplyCustomProfile"
+      />
       <div v-if="loading" class="placeholder">加载中…</div>
       <div v-else-if="filteredProfiles.length === 0" class="placeholder">暂无横断面模板</div>
       <ul v-else class="asset-list">
@@ -107,8 +119,9 @@ import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { templateApi } from '@/api/templateApi'
-import { registerCrossSectionProfiles } from '@/utils/roadProfiles'
+import { registerCrossSectionProfiles, getProfileById } from '@/utils/roadProfiles'
 import type { CrossSectionProfile, LaneDef } from '@/types/road-network'
+import CrossSectionEditor from './CrossSectionEditor.vue'
 import type { IDMParams, MOBILParams, ODPair } from '@/types/simulation'
 
 const editor = useEditorStateStore()
@@ -125,6 +138,7 @@ const tabs: TabDef[] = [
 ]
 const activeTab = ref<TabId>('sections')
 const search = ref('')
+const showEditor = ref(false)
 
 const profiles = ref<CrossSectionProfile[]>([])
 const loading = ref(false)
@@ -197,6 +211,19 @@ function laneStyle(lane: LaneDef): Record<string, string> {
     flex: String(lane.width),
     background: color,
   }
+}
+
+function onSaveCustomProfile(profile: CrossSectionProfile): void {
+  profiles.value = [...profiles.value, profile]
+  registerCrossSectionProfiles(profiles.value)
+  editor.setActiveProfile(profile.id)
+  road.setActiveCrossSection(profile.id)
+}
+
+function onApplyCustomProfile(profile: CrossSectionProfile): void {
+  registerCrossSectionProfiles([...profiles.value, profile])
+  editor.setActiveProfile(profile.id)
+  road.setActiveCrossSection(profile.id)
 }
 
 function onSelectProfile(profile: CrossSectionProfile): void {
@@ -322,4 +349,10 @@ onMounted(async () => {
 .layer-list { list-style: none; padding: 0; margin: 0; }
 .layer-row { padding: 6px 4px; font-size: 13px; }
 .layer-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.editor-toggle-row { margin-bottom: 6px; }
+.toggle-editor-btn {
+  width: 100%; padding: 6px; background: #2c5d99; border: none;
+  color: #fff; border-radius: 3px; cursor: pointer; font-size: 12px;
+}
+.toggle-editor-btn:hover { background: #3a6eaa; }
 </style>
