@@ -15,6 +15,7 @@ import type {
   MeshData,
 } from '@/types/road-network'
 import { createSegmentFromPoints, offsetPolyline } from '@/utils/roadGeometry'
+import { storeEventBus } from '@/stores/storeEventBus'
 
 export const useRoadNetworkStore = defineStore('roadNetwork', () => {
   const nodes = ref<Map<string, RoadNode>>(new Map())
@@ -102,6 +103,10 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     if (!existing) return
     nodes.value.set(id, { ...existing, ...patch })
     topologyVersion.value++
+    if ('position' in patch) {
+      storeEventBus.emit('road-network:node-moved', { nodeId: id })
+    }
+    storeEventBus.emit('road-network:topology-changed', { version: topologyVersion.value })
   }
 
   function removeNode(id: string): void {
@@ -122,6 +127,8 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     }
     ensureSegmentHalfEdges(seg)
     topologyVersion.value++
+    storeEventBus.emit('road-network:segment-added', { segmentId: seg.id })
+    storeEventBus.emit('road-network:topology-changed', { version: topologyVersion.value })
   }
 
   function updateSegment(id: string, patch: Partial<RoadSegment>): void {
@@ -157,6 +164,8 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
       }
     }
     topologyVersion.value++
+    storeEventBus.emit('road-network:segment-removed', { segmentId: id })
+    storeEventBus.emit('road-network:topology-changed', { version: topologyVersion.value })
   }
 
   function getSegment(id: string): RoadSegment | undefined {

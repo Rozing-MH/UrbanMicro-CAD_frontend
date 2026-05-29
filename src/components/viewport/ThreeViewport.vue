@@ -61,6 +61,7 @@ import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
+import { useCrossSectionEditorStore } from '@/stores/crossSectionEditorStore'
 import { historyStack, type HistorySessionId } from '@/commands/HistoryStack'
 import {
   AddSegmentCommand,
@@ -73,13 +74,13 @@ import {
   SetTurnRestrictionCommand,
   UpgradeSegmentCommand,
 } from '@/commands/roadCommands'
-import { buildSegmentGeometry, createSegmentFromPoints } from '@/utils/roadGeometry'
+import { buildSegmentGeometry, createSegmentFromPoints, rebuildCurvedCenterLine } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
 import { buildQuadraticCenterLine, approximateCurveLength } from '@/adapters/BezierJsAdapter'
 import { smartSnap, buildViewTransform, type SnapResult, type GuideLine } from '@/services/snapService'
-import { healOnSegmentAdd } from '@/services/topologyHealingService'
+import { healOnSegmentAdd, recalculateBoundary } from '@/services/topologyHealingService'
 import LaneArrowPicker from '@/components/panels/LaneArrowPicker.vue'
-import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection, ElevationMode } from '@/types'
+import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection, ElevationMode, DrawingMode } from '@/types'
 import { SLOPE_LIMITS } from '@/types/road-network'
 import type { TurnRestriction as TurnRestrictionType } from '@/types/traffic-rule'
 
@@ -118,6 +119,7 @@ const editorStore = useEditorStateStore()
 const simStore = useSimulationStore()
 const evaluationStore = useEvaluationStore()
 const trafficRuleStore = useTrafficRuleStore()
+const csEditor = useCrossSectionEditorStore()
 
 // Pass containerRef at construction — renderer auto-inits via its own onMounted
 const renderer = useThreeRenderer(containerRef)
@@ -155,6 +157,7 @@ const hint = computed(() => {
       const ctx = roadStore.drawingContext
       if (ctx.mode === 'CURVE' && curveEndPoint.value) return '移动鼠标调整曲线弧度，左键确认，Esc 取消'
       if (ctx.mode === 'CURVE') return '左键放置曲线终点，Esc 取消'
+      if (ctx.mode === 'FREE') return '左键放置道路节点（自由模式），Esc 结束'
       return '左键放置道路节点，Esc 结束，Shift 自由模式'
     }
     case 'ROAD_UPGRADE': return '点击路段，使用左侧当前断面原位升级'
@@ -604,6 +607,18 @@ function applyTopologyHealing(newSegment: RoadSegment): void {
     roadStore.addSegment(seg)
     roadRenderer.addSegment(seg)
   }
+  // Recalculate boundary polygons for affected nodes
+  recalculateBoundaryForNode(newSegment.startNodeId)
+  recalculateBoundaryForNode(newSegment.endNodeId)
+  for (const node of result.newNodes) {
+    recalculateBoundaryForNode(node.id)
+  }
+}
+
+function recalculateBoundaryForNode(nodeId: string): void {
+  const boundary = recalculateBoundary(nodeId, roadStore.nodes, roadStore.segments)
+  roadStore.updateNode(nodeId, { polygonVertices: boundary })
+  roadRenderer.updateIntersectionPolygon(nodeId, boundary)
 }
 
 function clearPreview(): void {
@@ -727,6 +742,7 @@ async function handleRoadDraw(point: Point2D, sessionId: HistorySessionId): Prom
         profile,
         elevation,
         isCurved: true,
+        controlPoint: point,
         meshData: await buildRoadMesh(curveCenterLine, profile, elevation.startZ),
       })
       if (!isCurrentHistorySession(sessionId)) return
@@ -849,9 +865,25 @@ function rebuildSegmentsForNode(nodeId: string): void {
   for (const segId of node.connectedSegmentIds) {
     const seg = roadStore.getSegment(segId)
     if (!seg) continue
+    if (seg.isCurved && seg.controlPoint) {
+      const startNode = roadStore.getNode(seg.startNodeId)
+      const endNode = roadStore.getNode(seg.endNodeId)
+      if (startNode && endNode) {
+        const newCenterLine = rebuildCurvedCenterLine(seg, startNode.position, endNode.position)
+        roadStore.updateSegment(segId, { centerLine: newCenterLine, length: approximateCurveLength(newCenterLine) })
+        const updated = roadStore.getSegment(segId)
+        if (updated) {
+          roadRenderer.removeSegment(segId)
+          roadRenderer.addSegment(updated)
+        }
+        continue
+      }
+    }
     roadRenderer.removeSegment(segId)
     roadRenderer.addSegment(seg)
   }
+  // Recalculate intersection boundary after segments changed
+  recalculateBoundaryForNode(nodeId)
 }
 
 function onPointerUp(): void {
@@ -1356,7 +1388,8 @@ function onKeyDown(event: KeyboardEvent): void {
     roadStore.updatePreview(ctx.previewEndPoint ?? ctx.startPoint ?? { x: 0, y: 0 }, ctx.controlPoint, newEndZ)
   } else if ((event.key === 'c' || event.key === 'C') && editorStore.activeTool === 'ROAD_DRAW') {
     event.preventDefault()
-    roadStore.setDrawingMode(roadStore.drawingContext.mode === 'CURVE' ? 'STRAIGHT' : 'CURVE')
+    const nextMode: Record<DrawingMode, DrawingMode> = { STRAIGHT: 'CURVE', CURVE: 'FREE', FREE: 'STRAIGHT' }
+    roadStore.setDrawingMode(nextMode[roadStore.drawingContext.mode])
   }
 }
 
@@ -1404,6 +1437,24 @@ watch(
 watch(
   () => trafficRuleStore.ruleVersion,
   () => updateLaneConnectorMeshes(),
+)
+
+// Cross-section editor 3D preview: rebuild target segment mesh when profile changes
+watch(
+  () => [csEditor.previewDirty, csEditor.profile?.totalWidth, csEditor.targetSegmentId],
+  async () => {
+    const segId = csEditor.targetSegmentId
+    if (!segId || !csEditor.profile) return
+    const seg = roadStore.getSegment(segId)
+    if (!seg) return
+    const meshData = await buildSegmentGeometry(seg.centerLine, csEditor.profile, seg.elevation.startZ)
+    roadStore.updateSegment(segId, { profile: csEditor.profile, meshData })
+    const updated = roadStore.getSegment(segId)
+    if (updated) {
+      roadRenderer.removeSegment(segId)
+      roadRenderer.addSegment(updated)
+    }
+  },
 )
 
 onMounted(() => {

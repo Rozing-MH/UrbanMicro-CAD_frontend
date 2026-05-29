@@ -1,4 +1,5 @@
 import type { Point2D, RoadNode, RoadSegment, RoadNetwork } from '@/types/road-network'
+import { buildRoadPolygon, unionPolygons } from '@/adapters/Clipper2DAdapter'
 
 // ============================================================
 // Topology Healing Service
@@ -186,6 +187,46 @@ export function mergeDegenerateNodes(network: RoadNetwork): string[] {
     }
   }
   return orphans
+}
+
+// ============================================================
+// recalculateBoundary — compute intersection polygon for a node
+// Offsets each connected segment's centerLine by half-width,
+// unions the resulting polygons to get the intersection boundary.
+// ============================================================
+
+export function recalculateBoundary(
+  nodeId: string,
+  nodes: Map<string, RoadNode>,
+  segments: Map<string, RoadSegment>,
+): Point2D[] {
+  const node = nodes.get(nodeId)
+  if (!node || node.connectedSegmentIds.length < 2) return []
+
+  const roadPolygons: Point2D[][] = []
+  for (const segId of node.connectedSegmentIds) {
+    const seg = segments.get(segId)
+    if (!seg) continue
+    const halfWidth = seg.profile.totalWidth / 2
+    if (seg.centerLine.length < 2) continue
+    const polygon = buildRoadPolygon(seg.centerLine, halfWidth)
+    if (polygon.length >= 3) {
+      roadPolygons.push(polygon)
+    }
+  }
+
+  if (roadPolygons.length < 2) return []
+
+  // Iteratively union all road polygons
+  let merged = roadPolygons[0]
+  for (let i = 1; i < roadPolygons.length; i++) {
+    const result = unionPolygons([merged], [roadPolygons[i]])
+    if (result.length > 0) {
+      merged = result.reduce((a, b) => a.length >= b.length ? a : b)
+    }
+  }
+
+  return merged
 }
 
 // ============================================================

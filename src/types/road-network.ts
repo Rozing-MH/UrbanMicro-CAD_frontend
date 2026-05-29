@@ -119,6 +119,7 @@ export interface RoadSegment {
   profile: CrossSectionProfile
   elevation: ElevationProfile
   isCurved: boolean
+  controlPoint?: Point2D
   length: number
   meshData?: MeshData
 }

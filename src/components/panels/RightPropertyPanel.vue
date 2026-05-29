@@ -230,11 +230,11 @@ import {
   UpdateSegmentCommand,
   UpgradeSegmentCommand,
 } from '@/commands/roadCommands'
-import { buildSegmentGeometry } from '@/utils/roadGeometry'
+import { buildSegmentGeometry, rebuildCurvedCenterLine, calculatePolylineLength } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
 import TrafficLightEditor from '@/components/panels/TrafficLightEditor.vue'
 import { useRuleValidation } from '@/composables/useRuleValidation'
-import type { ElevationMode, Lane, LaneArrow, LaneDirection, RoadSegment, TurnDirection } from '@/types/road-network'
+import type { ElevationMode, Lane, LaneArrow, LaneDirection, Point2D, RoadSegment, TurnDirection } from '@/types/road-network'
 import type { Crosswalk, LaneRestriction, MarkingType, TurnRestriction } from '@/types/traffic-rule'
 
 const editor = useEditorStateStore()
@@ -378,8 +378,39 @@ async function updateSegment(patch: Partial<RoadSegment>): Promise<void> {
   await executePanelCommand(new UpdateSegmentCommand(selectedSegment.value.id, patch))
 }
 
-function onSegmentCurvedChange(ev: Event): void {
-  void updateSegment({ isCurved: (ev.target as HTMLInputElement).checked })
+async function onSegmentCurvedChange(ev: Event): Promise<void> {
+  if (!selectedSegment.value) return
+  const seg = selectedSegment.value
+  const curved = (ev.target as HTMLInputElement).checked
+  const startNode = road.getNode(seg.startNodeId)
+  const endNode = road.getNode(seg.endNodeId)
+  if (!startNode || !endNode) return
+
+  let newCenterLine: Point2D[]
+  let newControlPoint: Point2D | undefined
+  if (curved) {
+    const midX = (startNode.position.x + endNode.position.x) / 2
+    const midY = (startNode.position.y + endNode.position.y) / 2
+    const dx = endNode.position.x - startNode.position.x
+    const dy = endNode.position.y - startNode.position.y
+    const len = Math.hypot(dx, dy) || 1
+    const perpX = -dy / len
+    const perpY = dx / len
+    newControlPoint = { x: midX + perpX * len * 0.15, y: midY + perpY * len * 0.15 }
+    newCenterLine = rebuildCurvedCenterLine({ ...seg, controlPoint: newControlPoint }, startNode.position, endNode.position)
+  } else {
+    newCenterLine = [startNode.position, endNode.position]
+    newControlPoint = undefined
+  }
+
+  const meshData = await buildSegmentGeometry(newCenterLine, seg.profile, seg.elevation.startZ)
+  await updateSegment({
+    isCurved: curved,
+    controlPoint: newControlPoint,
+    centerLine: newCenterLine,
+    length: calculatePolylineLength(newCenterLine),
+    meshData,
+  })
 }
 
 function defaultRestriction(laneId: string): LaneRestriction {

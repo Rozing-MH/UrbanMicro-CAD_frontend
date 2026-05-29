@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { storeEventBus } from '@/stores/storeEventBus'
 import type {
   TrafficLightController,
   LaneRestriction,
@@ -101,6 +102,7 @@ export const useTrafficRuleStore = defineStore('trafficRule', () => {
   function addTrafficLight(light: TrafficLightController): void {
     trafficLights.value.set(light.id, normalizeTrafficLight(light))
     ruleVersion.value++
+    emitRuleChanged('traffic-light', light.id)
   }
 
   function updateTrafficLight(id: string, patch: Partial<TrafficLightController>): void {
@@ -108,51 +110,65 @@ export const useTrafficRuleStore = defineStore('trafficRule', () => {
     if (!existing) return
     trafficLights.value.set(id, normalizeTrafficLight({ ...existing, ...patch }))
     ruleVersion.value++
+    emitRuleChanged('traffic-light', id)
   }
 
   function removeTrafficLight(id: string): void {
     trafficLights.value.delete(id)
     ruleVersion.value++
+    emitRuleChanged('traffic-light', id)
   }
 
   function setLaneRestriction(r: LaneRestriction): void {
     laneRestrictions.value.set(r.laneId, normalizeLaneRestriction(r))
     ruleVersion.value++
+    emitRuleChanged('lane-restriction', r.laneId)
   }
 
   function removeLaneRestriction(laneId: string): void {
     laneRestrictions.value.delete(laneId)
     ruleVersion.value++
+    emitRuleChanged('lane-restriction', laneId)
   }
 
   function addLaneConnector(c: LaneConnector): void {
     laneConnectors.value.set(c.id, c)
     ruleVersion.value++
+    emitRuleChanged('lane-connector', c.id)
   }
 
   function removeLaneConnector(id: string): void {
     laneConnectors.value.delete(id)
     ruleVersion.value++
+    emitRuleChanged('lane-connector', id)
   }
 
   function addTurnRestriction(tr: TurnRestriction): void {
     turnRestrictions.value.set(turnRestrictionKey(tr), tr)
     ruleVersion.value++
+    emitRuleChanged('turn-restriction', tr.nodeId)
   }
 
   function removeTurnRestriction(id: string): void {
     turnRestrictions.value.delete(id)
     ruleVersion.value++
+    emitRuleChanged('turn-restriction', id)
   }
 
   function addCrosswalk(cw: Crosswalk): void {
     crosswalks.value.set(cw.id, cw)
     ruleVersion.value++
+    emitRuleChanged('crosswalk', cw.id)
   }
 
   function removeCrosswalk(id: string): void {
     crosswalks.value.delete(id)
     ruleVersion.value++
+    emitRuleChanged('crosswalk', id)
+  }
+
+  function emitRuleChanged(ruleType: string, entityId: string): void {
+    storeEventBus.emit('traffic-rule:rule-changed', { ruleType, entityId })
   }
 
   function selectLight(id: string | null): void {
