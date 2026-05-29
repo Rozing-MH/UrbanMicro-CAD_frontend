@@ -7,6 +7,7 @@ import type {
   VehicleMixConfig,
   VehicleType,
   VehicleSpec,
+  RouteWaypoint,
 } from '@/types/simulation'
 import type { Lane, RoadSegment, RoadNode, TopologyData } from '@/types/road-network'
 import type { RuleData, TrafficLightController, LaneRestriction, LaneConnector } from '@/types/traffic-rule'
@@ -94,6 +95,9 @@ interface SimContext {
   completedVehicles: number
   time: number
   running: boolean
+
+  // A* route cache: "fromLaneId:toLaneId" → RouteWaypoint[]
+  routeCache: Map<string, RouteWaypoint[]>
 }
 
 const ctx: SimContext = {
@@ -118,6 +122,7 @@ const ctx: SimContext = {
   vehicles: new Map(),
   laneVehicleIndex: new Map(),
   laneIds: [],
+  routeCache: new Map(),
   completedVehicles: 0,
   time: 0,
   running: false,
@@ -621,6 +626,8 @@ function spawnVehicles(dt: number): void {
 
     const vehicleId = `v_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
     const type = sampleVehicleType()
+    // A* route from spawn lane to destination node
+    const plannedRoute = findRoute(spawnLane.id, entry.toNodeId, type)
     const newVehicle: SimVehicle = {
       id: vehicleId,
       type,
@@ -631,7 +638,7 @@ function spawnVehicles(dt: number): void {
       targetLaneId: null,
       laneChangeState: 'NONE',
       laneChangeProgress: 0,
-      plannedRoute: [{ laneId: spawnLane.id }],
+      plannedRoute,
       currentRouteIndex: 0,
       totalDistanceTraveled: 0,
       spawnTime: ctx.time,
@@ -642,39 +649,236 @@ function spawnVehicles(dt: number): void {
 }
 
 // ============================================================
+// A* Path Finder (lane-level graph)
+// ============================================================
+
+/**
+ * A* search on the lane-level graph.
+ * Nodes = lanes; edges = lane connectors + same-segment adjacency + node-to-node transitions.
+ * Heuristic = Euclidean distance between end-node of current lane and destination node.
+ * Vehicle type filter: skips lanes whose allowedVehicleTypes excludes the vehicle type.
+ */
+function aStarFindPath(
+  fromLaneId: string,
+  toNodeId: string,
+  vehicleType: VehicleType,
+): RouteWaypoint[] | null {
+  const fromGeo = ctx.laneGeoMap.get(fromLaneId)
+  if (!fromGeo) return null
+  const destNode = ctx.nodeMap.get(toNodeId)
+  if (!destNode) return null
+
+  // If already on a lane ending at destination, simple route
+  if (fromGeo.endNodeId === toNodeId) {
+    return [{ laneId: fromLaneId }]
+  }
+
+  const openSet = new Map<string, { g: number; f: number }>() // laneId → g,f
+  const cameFrom = new Map<string, { laneId: string; connectorId?: string }>()
+  const gScore = new Map<string, number>()
+  const closedSet = new Set<string>()
+
+  const startKey = fromLaneId
+  const h0 = heuristic(fromGeo, destNode)
+  gScore.set(startKey, 0)
+  openSet.set(startKey, { g: 0, f: h0 })
+
+  while (openSet.size > 0) {
+    // Pick node with lowest f
+    let currentKey = ''
+    let bestF = Infinity
+    for (const [key, val] of openSet) {
+      if (val.f < bestF) { bestF = val.f; currentKey = key }
+    }
+
+    const currentGeo = ctx.laneGeoMap.get(currentKey)
+    if (!currentGeo) { openSet.delete(currentKey); continue }
+
+    // Goal: a lane whose endNodeId equals the destination
+    if (currentGeo.endNodeId === toNodeId) {
+      return reconstructPath(cameFrom, currentKey)
+    }
+
+    openSet.delete(currentKey)
+    closedSet.add(currentKey)
+
+    // Expand neighbors
+    const neighbors = getLaneNeighbors(currentKey, vehicleType)
+    for (const neighbor of neighbors) {
+      if (closedSet.has(neighbor.laneId)) continue
+
+      const neighborGeo = ctx.laneGeoMap.get(neighbor.laneId)
+      if (!neighborGeo) continue
+
+      const tentativeG = (gScore.get(currentKey) ?? Infinity) + currentGeo.length
+      const existingG = gScore.get(neighbor.laneId) ?? Infinity
+
+      if (tentativeG < existingG) {
+        cameFrom.set(neighbor.laneId, { laneId: currentKey, connectorId: neighbor.connectorId })
+        gScore.set(neighbor.laneId, tentativeG)
+        const h = heuristic(neighborGeo, destNode)
+        const f = tentativeG + h
+        openSet.set(neighbor.laneId, { g: tentativeG, f })
+      }
+    }
+
+    // Safety: limit search depth
+    if (closedSet.size > 500) break
+  }
+
+  return null // No path found
+}
+
+function heuristic(laneGeo: LaneGeo, destNode: RoadNode): number {
+  // Euclidean distance from lane's end node to destination
+  const endNode = ctx.nodeMap.get(laneGeo.endNodeId)
+  if (!endNode) return 0
+  const dx = endNode.position.x - destNode.position.x
+  const dy = endNode.position.y - destNode.position.y
+  return Math.sqrt(dx * dx + dy * dy)
+}
+
+interface LaneNeighbor {
+  laneId: string
+  connectorId?: string
+}
+
+function getLaneNeighbors(laneId: string, vehicleType: VehicleType): LaneNeighbor[] {
+  const result: LaneNeighbor[] = []
+  const geo = ctx.laneGeoMap.get(laneId)
+  if (!geo) return result
+
+  const endNodeId = geo.endNodeId
+
+  // 1. Lane connectors from this lane at the end node
+  const connectors = ctx.laneConnectorsByFrom.get(laneId) ?? []
+  for (const lc of connectors) {
+    const toGeo = ctx.laneGeoMap.get(lc.toLaneId)
+    if (!toGeo || toGeo.startNodeId !== endNodeId) continue
+    if (!isLaneAllowed(lc.toLaneId, vehicleType)) continue
+    result.push({ laneId: lc.toLaneId, connectorId: lc.id })
+  }
+
+  // 2. If no connectors, fallback: all lanes starting at end node
+  if (result.length === 0) {
+    const nodeLanes = ctx.nodeToLanes.get(endNodeId) ?? []
+    for (const nlId of nodeLanes) {
+      if (nlId === laneId) continue
+      const nlGeo = ctx.laneGeoMap.get(nlId)
+      if (!nlGeo || nlGeo.startNodeId !== endNodeId) continue
+      if (!isLaneAllowed(nlId, vehicleType)) continue
+      result.push({ laneId: nlId })
+    }
+  }
+
+  // 3. Same-segment adjacent lanes (for lane change awareness, not routing)
+  // Not added as A* neighbors — MOBIL handles lane changes at runtime
+
+  return result
+}
+
+function isLaneAllowed(laneId: string, vehicleType: VehicleType): boolean {
+  const restriction = ctx.laneRestrictions.get(laneId)
+  if (!restriction) return true
+  if (restriction.allowedVehicleTypes.length === 0) return true
+  return restriction.allowedVehicleTypes.includes(vehicleType)
+}
+
+function reconstructPath(
+  cameFrom: Map<string, { laneId: string; connectorId?: string }>,
+  endKey: string,
+): RouteWaypoint[] {
+  const path: RouteWaypoint[] = []
+  let current: string | undefined = endKey
+  const visited = new Set<string>()
+
+  // Trace back from end to start
+  const stack: string[] = []
+  while (current && !visited.has(current)) {
+    visited.add(current)
+    stack.push(current)
+    const from = cameFrom.get(current)
+    current = from?.laneId
+  }
+  stack.reverse()
+
+  for (const laneId of stack) {
+    const from = cameFrom.get(laneId)
+    path.push({ laneId, connectorId: from?.connectorId })
+  }
+
+  return path
+}
+
+/** Find or compute a route from originLaneId toward toNodeId */
+function findRoute(fromLaneId: string, toNodeId: string, vehicleType: VehicleType): RouteWaypoint[] {
+  const cacheKey = `${fromLaneId}:${toNodeId}:${vehicleType}`
+  const cached = ctx.routeCache.get(cacheKey)
+  if (cached) return cached
+
+  const route = aStarFindPath(fromLaneId, toNodeId, vehicleType)
+  if (route) {
+    ctx.routeCache.set(cacheKey, route)
+    return route
+  }
+
+  // Fallback: single-lane route
+  return [{ laneId: fromLaneId }]
+}
+
+// ============================================================
 // Lane Transition
 // ============================================================
 
 function findNextLane(vehicle: SimVehicle): string | null {
+  // 1. Try planned route (A* pre-computed)
+  if (vehicle.plannedRoute.length > 0) {
+    const nextIdx = vehicle.currentRouteIndex + 1
+    if (nextIdx < vehicle.plannedRoute.length) {
+      const nextWaypoint = vehicle.plannedRoute[nextIdx]
+      if (nextWaypoint.laneId !== vehicle.currentLaneId) {
+        return nextWaypoint.laneId
+      }
+    }
+  }
+
+  // 2. Fallback: lane connector routing
   const geo = ctx.laneGeoMap.get(vehicle.currentLaneId)
   if (!geo) return null
 
   const endNodeId = geo.endNodeId
-
-  // Check lane connectors from this lane at this node
   const connectors = ctx.laneConnectorsByFrom.get(vehicle.currentLaneId) ?? []
-  // Filter connectors: target lane must START at the end node (not end there = opposite direction)
   const validConnectors = connectors.filter((lc) => {
     const toGeo = ctx.laneGeoMap.get(lc.toLaneId)
     return toGeo?.startNodeId === endNodeId
   })
 
   if (validConnectors.length > 0) {
-    // Pick a random connector (simple strategy; A* will improve this later)
-    const idx = Math.floor(Math.random() * validConnectors.length)
-    return validConnectors[idx].toLaneId
+    // Prefer connectors leading to allowed lanes
+    for (const lc of validConnectors) {
+      if (isLaneAllowed(lc.toLaneId, vehicle.type)) return lc.toLaneId
+    }
+    return validConnectors[0].toLaneId
   }
 
-  // Fallback: find any lane at the end node that starts from there
+  // 3. Fallback: any lane starting at end node
   const nodeLanes = ctx.nodeToLanes.get(endNodeId) ?? []
   for (const laneId of nodeLanes) {
     const nextGeo = ctx.laneGeoMap.get(laneId)
     if (nextGeo && nextGeo.startNodeId === endNodeId && laneId !== vehicle.currentLaneId) {
-      return laneId
+      if (isLaneAllowed(laneId, vehicle.type)) return laneId
     }
   }
 
   return null
+}
+
+/** Extract destination node ID from vehicle's planned route */
+function findDestinationNode(vehicle: SimVehicle): string | null {
+  if (vehicle.plannedRoute.length === 0) return null
+  const lastWaypoint = vehicle.plannedRoute[vehicle.plannedRoute.length - 1]
+  const lastGeo = ctx.laneGeoMap.get(lastWaypoint.laneId)
+  return lastGeo?.endNodeId ?? null
 }
 
 // ============================================================
@@ -729,6 +933,45 @@ function stepVehicles(dt: number): void {
     const spec = VEHICLE_SPECS[veh.type]
     acc = Math.max(-spec.comfortableDeceleration * 2, Math.min(spec.acceleration, acc))
 
+    // --- Vehicle type forbidden check ---
+    if (!isLaneAllowed(veh.currentLaneId, veh.type)) {
+      // Vehicle is on a forbidden lane → brake to stop and reroute
+      acc = Math.max(-spec.comfortableDeceleration * 2, -spec.comfortableDeceleration)
+      if (veh.currentSpeed < 0.5) {
+        // Stopped on forbidden lane: try reroute via A*
+        const geo2 = ctx.laneGeoMap.get(veh.currentLaneId)
+        if (geo2) {
+          const nodeLanes = ctx.nodeToLanes.get(geo2.endNodeId) ?? []
+          for (const nlId of nodeLanes) {
+            const nlGeo = ctx.laneGeoMap.get(nlId)
+            if (nlGeo && nlGeo.startNodeId === geo2.endNodeId && isLaneAllowed(nlId, veh.type)) {
+              // Force transition to allowed lane
+              const updatedVeh: SimVehicle = {
+                ...veh,
+                currentLaneId: nlId,
+                progress: 0.001,
+                currentSpeed: 0,
+                laneChangeState: 'NONE',
+                laneChangeProgress: 0,
+                lateralOffset: 0,
+                totalDistanceTraveled: veh.totalDistanceTraveled,
+              }
+              ctx.vehicles.set(id, updatedVeh)
+              removeFromLaneIndex(veh.currentLaneId, id)
+              addToLaneIndex(nlId, id)
+              // Reroute from new lane
+              const destNodeId = findDestinationNode(veh)
+              if (destNodeId) {
+                const newRoute = findRoute(nlId, destNodeId, veh.type)
+                ctx.vehicles.set(id, { ...updatedVeh, plannedRoute: newRoute, currentRouteIndex: 0 })
+              }
+              break
+            }
+          }
+        }
+      }
+    }
+
     // --- Update speed and progress ---
     const newSpeed = Math.max(0, veh.currentSpeed + acc * dt)
     const distanceTraveled = ((veh.currentSpeed + newSpeed) / 2) * dt // Trapezoidal integration
@@ -757,6 +1000,7 @@ function stepVehicles(dt: number): void {
           currentLaneId: nextLaneId,
           progress: Math.min(nextProgress, 0.99),
           currentSpeed: newSpeed,
+          currentRouteIndex: veh.currentRouteIndex + 1,
           totalDistanceTraveled: veh.totalDistanceTraveled + distanceTraveled,
         }
         ctx.vehicles.set(id, updatedVeh)
@@ -904,6 +1148,7 @@ const simApi = {
     ctx.time = 0
     ctx.vehicles.clear()
     ctx.laneVehicleIndex.clear()
+    ctx.routeCache.clear()
     ctx.completedVehicles = 0
     if (ctx.vehicleBuffer) ctx.vehicleBuffer.fill(0)
   },
