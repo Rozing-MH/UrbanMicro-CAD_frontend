@@ -54,6 +54,8 @@ import { useThreeRenderer } from '@/composables/useThreeRenderer'
 import { useRoadRenderer } from '@/composables/useRoadRenderer'
 import { useVehicleRenderer } from '@/composables/useVehicleRenderer'
 import { useCameraControls } from '@/composables/useCameraControls'
+import { useGizmoControls } from '@/composables/useGizmoControls'
+import { useNodeAdjustmentStore, type GizmoMode } from '@/stores/nodeAdjustmentStore'
 import { useHeatmap } from '@/composables/useHeatmap'
 import { useGroundGrid } from '@/composables/useGroundGrid'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
@@ -136,6 +138,12 @@ const cameraRef = computed(() => renderer.state.value?.camera ?? null) as Ref<TH
 const roadRenderer = useRoadRenderer(sceneRef)
 const vehicleRenderer = useVehicleRenderer(sceneRef)
 const cameraControls = useCameraControls(cameraRef, containerRef)
+const nodeAdjustStore = useNodeAdjustmentStore()
+const gizmoControls = useGizmoControls(
+  cameraRef, containerRef, sceneRef, computed(() => nodeAdjustStore.gizmoMode),
+  () => { cameraControls.state.isDragging = false; cameraControls.state.isOrbiting = false },
+  commitGizmoDrag,
+)
 const heatmap = useHeatmap(sceneRef)
 const groundGrid = useGroundGrid(sceneRef)
 
@@ -332,6 +340,10 @@ const isDraggingVertex = ref(false)
 const dragVertexNodeId = ref<string | null>(null)
 const dragVertexIndex = ref<number>(-1)
 const dragVertexStartPos = ref<Point2D | null>(null)
+
+// Gizmo drag tracking — commit MoveNodeCommand on drag end
+const gizmoDragNodeId = ref<string | null>(null)
+const gizmoDragStartPos = ref<Point2D | null>(null)
 
 // Road preview materials (shared, not disposed per-frame)
 const previewSurfaceMaterial = new THREE.MeshBasicMaterial({
@@ -1045,6 +1057,11 @@ function clearNodeAdjustState(): void {
   dragVertexNodeId.value = null
   dragVertexIndex.value = -1
   dragVertexStartPos.value = null
+  // Detach Gizmo
+  gizmoControls.detach()
+  nodeAdjustStore.deactivateNode()
+  gizmoDragNodeId.value = null
+  gizmoDragStartPos.value = null
 }
 
 function pickNodeAdjustVertex(event: MouseEvent): { nodeId: string; vertexIndex: number } | null {
@@ -1085,16 +1102,60 @@ function handleNodeAdjust(event: MouseEvent): void {
     return
   }
 
-  // Otherwise, try to pick a node (for selection)
+  // Otherwise, try to pick a node (for selection + Gizmo attach)
   const picked = pickSceneObject(event)
   if (picked?.nodeId) {
     roadStore.selectNode(picked.nodeId)
     updateNodeAdjustVisuals()
+    attachGizmoToNode(picked.nodeId)
     return
   }
-  // Click on empty space — clear selection
+  // Click on empty space — clear selection and detach Gizmo
   roadStore.clearSelection()
+  gizmoControls.detach()
+  nodeAdjustStore.deactivateNode()
   updateNodeAdjustVisuals()
+}
+
+/** Commit Gizmo drag — restore start pos then execute MoveNodeCommand */
+function commitGizmoDrag(): void {
+  const nodeId = gizmoDragNodeId.value
+  const startPos = gizmoDragStartPos.value
+  if (!nodeId || !startPos) return
+  const node = roadStore.getNode(nodeId)
+  if (!node) return
+  const curPos = node.position
+  if (curPos.x === startPos.x && curPos.y === startPos.y) return
+
+  // Restore-then-execute pattern (same as MoveNodeCommand drag)
+  const from3d = { x: startPos.x, y: startPos.y, z: node.elevation }
+  const to3d = { x: curPos.x, y: curPos.y, z: node.elevation }
+  roadStore.updateNode(nodeId, { position: startPos })
+  const sessionId = editorStore.historySessionId
+  if (sessionId !== null) {
+    void historyStack.execute(new MoveNodeCommand(nodeId, from3d, to3d), sessionId).catch(() => {})
+  }
+  // Reset tracking state for next drag
+  gizmoDragStartPos.value = { x: curPos.x, y: curPos.y }
+}
+
+/** Attach Gizmo to a node's marker mesh for 3D transform */
+function attachGizmoToNode(nodeId: string): void {
+  const node = roadStore.getNode(nodeId)
+  if (!node) return
+  const marker = roadRenderer.nodeMarkers.get(nodeId)
+  if (!marker) return
+  nodeAdjustStore.activateNode(nodeId)
+  gizmoControls.init()
+  // Track start position for command commit
+  gizmoDragNodeId.value = nodeId
+  gizmoDragStartPos.value = { x: node.position.x, y: node.position.y }
+  gizmoControls.setOnTransform((objectId, newPosition) => {
+    // Real-time update during Gizmo drag
+    roadStore.updateNode(objectId, { position: { x: newPosition.x, y: newPosition.z } })
+    rebuildSegmentsForNode(objectId)
+  })
+  gizmoControls.attach(marker)
 }
 
 function updateNodeAdjustOutline(nodeId: string, node: RoadNode): void {
@@ -2131,6 +2192,7 @@ onBeforeUnmount(() => {
   }
   laneArrowMeshes.clear()
   cameraControls.detach()
+  gizmoControls.dispose()
   renderer.dispose()
 })
 </script>

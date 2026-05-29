@@ -54,6 +54,16 @@
           @click="roadStore.setDrawingMode(m.id)"
         >{{ m.label }}</button>
       </div>
+      <div v-if="editor.activeTool === 'NODE_ADJUST'" class="draw-mode-group">
+        <button
+          v-for="m in gizmoModes"
+          :key="m.id"
+          class="draw-mode-btn"
+          :class="{ active: nodeAdjustStore.gizmoMode === m.id }"
+          :title="m.title"
+          @click="nodeAdjustStore.setGizmoMode(m.id)"
+        >{{ m.icon }} {{ m.label }}</button>
+      </div>
     </div>
 
     <div class="toolbar-section view-mode">
@@ -82,6 +92,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useEditorStateStore, type ToolMode, type ViewMode } from '@/stores/editorStateStore'
+import { useNodeAdjustmentStore, type GizmoMode } from '@/stores/nodeAdjustmentStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
@@ -96,6 +107,7 @@ const project = useProjectStore()
 const roadStore = useRoadNetworkStore()
 const ruleStore = useTrafficRuleStore()
 const simStore = useSimulationStore()
+const nodeAdjustStore = useNodeAdjustmentStore()
 const { runValidation } = useRuleValidation()
 
 const saving = ref(false)
@@ -131,6 +143,13 @@ const drawModes: DrawModeDef[] = [
   { id: 'STRAIGHT', label: '直线', title: '直线绘路' },
   { id: 'CURVE', label: '曲线', title: '二次贝塞尔曲线绘路（三点）' },
   { id: 'FREE', label: '自由', title: '自由绘路（无角度约束）' },
+]
+
+interface GizmoModeDef { id: GizmoMode; icon: string; label: string; title: string }
+const gizmoModes: GizmoModeDef[] = [
+  { id: 'TRANSLATE', icon: '✥', label: '平移', title: '平移模式' },
+  { id: 'ROTATE',    icon: '↻', label: '旋转', title: '旋转模式' },
+  { id: 'SCALE',     icon: '⤢', label: '缩放', title: '缩放模式' },
 ]
 
 async function onUndo(): Promise<void> {
