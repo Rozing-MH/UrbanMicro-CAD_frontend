@@ -8,6 +8,7 @@ export {
   MoveNodeCommand,
   RemoveSignalStepCommand,
   SetCrosswalkCommand,
+  SetCrossSectionCommand,
   SetLaneArrowCommand,
   SetLaneConnectorCommand,
   SetLaneRestrictionCommand,

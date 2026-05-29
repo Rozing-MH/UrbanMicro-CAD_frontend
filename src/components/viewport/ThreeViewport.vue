@@ -76,7 +76,7 @@ import {
 import { buildSegmentGeometry, createSegmentFromPoints } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
 import { buildQuadraticCenterLine, approximateCurveLength } from '@/adapters/BezierJsAdapter'
-import { smartSnap, type SnapResult, type GuideLine } from '@/services/snapService'
+import { smartSnap, buildViewTransform, type SnapResult, type GuideLine } from '@/services/snapService'
 import { healOnSegmentAdd } from '@/services/topologyHealingService'
 import LaneArrowPicker from '@/components/panels/LaneArrowPicker.vue'
 import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection, ElevationMode } from '@/types'
@@ -200,13 +200,24 @@ function screenToWorld(event: MouseEvent): Point2D | null {
 
 function snapPoint(p: Point2D): Point2D {
   const ctx = roadStore.drawingContext
+  const cam = cameraRef.value
+  const container = containerRef.value
+  let viewTransform = null
+  if (cam && container) {
+    viewTransform = buildViewTransform(
+      { position: { x: cam.position.x, y: cam.position.y, z: cam.position.z }, fov: cam.fov },
+      container.clientWidth,
+      container.clientHeight,
+    )
+  }
   const result = smartSnap(p, roadStore.nodes, roadStore.segments, {
     gridSnap: editorStore.snapToGrid,
     gridSize: editorStore.gridSize,
     roadSnap: editorStore.snapToRoad,
     startNodeId: ctx.startNodeId,
     startPoint: ctx.startPoint,
-    freeMode: shiftHeld.value,
+    freeMode: shiftHeld.value || roadStore.drawingContext.mode === 'FREE',
+    viewTransform,
   })
   lastSnapResult.value = result
   return result.point
@@ -574,14 +585,21 @@ function offsetCenterLineLocal(centerLine: Point2D[], offset: number): Point2D[]
 function applyTopologyHealing(newSegment: RoadSegment): void {
   const network = { nodes: roadStore.nodes, segments: roadStore.segments, lanes: roadStore.lanes, laneArrows: roadStore.laneArrows, halfEdges: roadStore.halfEdges }
   const result = healOnSegmentAdd(newSegment, network, genId)
-  for (const nodeId of result.removedSegmentIds) {
-    roadStore.removeSegment(nodeId)
-    roadRenderer.removeSegment(nodeId)
+  // Remove old half-edges for replaced segments
+  for (const heId of result.removedHalfEdgeIds) {
+    roadStore.removeHalfEdge(heId)
   }
+  // Remove replaced segments
+  for (const segId of result.removedSegmentIds) {
+    roadStore.removeSegment(segId)
+    roadRenderer.removeSegment(segId)
+  }
+  // Add new nodes
   for (const node of result.newNodes) {
     roadStore.addNode(node)
     roadRenderer.addNode(node)
   }
+  // Add new segments (addSegment auto-creates half-edges via ensureSegmentHalfEdges)
   for (const seg of result.newSegments) {
     roadStore.addSegment(seg)
     roadRenderer.addSegment(seg)

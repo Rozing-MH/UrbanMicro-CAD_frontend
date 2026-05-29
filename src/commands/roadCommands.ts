@@ -258,6 +258,56 @@ export class CreateParallelSegmentCommand extends AddSegmentCommand {
   }
 }
 
+export class SetCrossSectionCommand implements ICommand {
+  readonly timestamp = Date.now()
+  conflictMessage: string | null = null
+  private oldSegment: RoadSegment | null = null
+  private oldLanes: Lane[] = []
+
+  constructor(
+    private segmentId: string,
+    private profile: CrossSectionProfile,
+    private meshData?: MeshData,
+  ) {}
+
+  execute(): void {
+    const store = useRoadNetworkStore()
+    const segment = store.getSegment(this.segmentId)
+    if (!segment) throw new Error('无法应用断面：目标路段不存在')
+
+    this.oldSegment = cloneSegment(segment)
+    this.oldLanes = store.getLanesBySegment(this.segmentId).map((lane) => ({ ...lane }))
+    const nextLaneIds = new Set(this.profile.lanes.map((_, index) => `${this.segmentId}:lane:${index}`))
+    const removedLaneIds = this.oldLanes
+      .map((lane) => lane.id)
+      .filter((laneId) => !nextLaneIds.has(laneId))
+    const conflictingRules = captureRulesForLaneIds(new Set(removedLaneIds))
+    const conflictRuleCount =
+      conflictingRules.laneRestrictions.length +
+      conflictingRules.laneConnectors.length +
+      conflictingRules.laneArrows.length
+
+    if (conflictRuleCount > 0) {
+      this.conflictMessage = `断面变更被阻止：目标断面会删除仍关联 ${conflictRuleCount} 项交规的车道，请先移除相关车道限制、连接器或箭头。`
+      throw new Error(this.conflictMessage)
+    }
+
+    store.replaceSegmentProfile(this.segmentId, this.profile, this.meshData)
+    this.conflictMessage = null
+  }
+
+  undo(): void {
+    if (!this.oldSegment) return
+    const store = useRoadNetworkStore()
+    store.replaceSegmentProfile(this.segmentId, this.oldSegment.profile, this.oldSegment.meshData)
+    for (const lane of this.oldLanes) store.addLane({ ...lane })
+  }
+
+  getDescription(): string {
+    return `Set cross-section on segment ${this.segmentId}`
+  }
+}
+
 export class UpdateSegmentCommand implements ICommand {
   readonly timestamp = Date.now()
   private beforeSegment: RoadSegment | null = null

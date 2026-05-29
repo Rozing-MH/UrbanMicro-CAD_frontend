@@ -129,6 +129,7 @@ interface DrawModeDef { id: 'STRAIGHT' | 'CURVE' | 'FREE'; label: string; title:
 const drawModes: DrawModeDef[] = [
   { id: 'STRAIGHT', label: '直线', title: '直线绘路' },
   { id: 'CURVE', label: '曲线', title: '二次贝塞尔曲线绘路（三点）' },
+  { id: 'FREE', label: '自由', title: '自由绘路（无角度约束）' },
 ]
 
 async function onUndo(): Promise<void> {

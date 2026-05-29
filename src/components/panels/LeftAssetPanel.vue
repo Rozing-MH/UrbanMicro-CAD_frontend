@@ -19,16 +19,13 @@
 
     <div v-if="activeTab === 'sections'" class="panel-content">
       <div class="editor-toggle-row">
-        <button class="toggle-editor-btn" @click="showEditor = !showEditor">
-          {{ showEditor ? '收起编辑器' : '自定义断面' }}
+        <button class="toggle-editor-btn" @click="toggleEditor">
+          {{ csEditor.isEditing ? '收起编辑器' : '自定义断面' }}
         </button>
       </div>
       <CrossSectionEditor
-        v-if="showEditor"
-        :initial-profile="editor.activeProfileId ? getProfileById(editor.activeProfileId) : null"
-        @close="showEditor = false"
-        @save="onSaveCustomProfile"
-        @apply="onApplyCustomProfile"
+        v-if="csEditor.isEditing"
+        @close="csEditor.reset()"
       />
       <div v-if="loading" class="placeholder">加载中…</div>
       <div v-else-if="filteredProfiles.length === 0" class="placeholder">暂无横断面模板</div>
@@ -118,6 +115,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useSimulationStore } from '@/stores/simulationStore'
+import { useCrossSectionEditorStore } from '@/stores/crossSectionEditorStore'
 import { templateApi } from '@/api/templateApi'
 import { registerCrossSectionProfiles, getProfileById } from '@/utils/roadProfiles'
 import type { CrossSectionProfile, LaneDef } from '@/types/road-network'
@@ -127,6 +125,7 @@ import type { IDMParams, MOBILParams, ODPair } from '@/types/simulation'
 const editor = useEditorStateStore()
 const road = useRoadNetworkStore()
 const sim = useSimulationStore()
+const csEditor = useCrossSectionEditorStore()
 
 type TabId = 'sections' | 'assets' | 'layers' | 'simulation'
 interface TabDef { id: TabId; label: string }
@@ -138,7 +137,6 @@ const tabs: TabDef[] = [
 ]
 const activeTab = ref<TabId>('sections')
 const search = ref('')
-const showEditor = ref(false)
 
 const profiles = ref<CrossSectionProfile[]>([])
 const loading = ref(false)
@@ -213,17 +211,12 @@ function laneStyle(lane: LaneDef): Record<string, string> {
   }
 }
 
-function onSaveCustomProfile(profile: CrossSectionProfile): void {
-  profiles.value = [...profiles.value, profile]
-  registerCrossSectionProfiles(profiles.value)
-  editor.setActiveProfile(profile.id)
-  road.setActiveCrossSection(profile.id)
-}
-
-function onApplyCustomProfile(profile: CrossSectionProfile): void {
-  registerCrossSectionProfiles([...profiles.value, profile])
-  editor.setActiveProfile(profile.id)
-  road.setActiveCrossSection(profile.id)
+function toggleEditor(): void {
+  if (csEditor.isEditing) {
+    csEditor.reset()
+  } else {
+    csEditor.startEditing(editor.activeProfileId ? getProfileById(editor.activeProfileId) : null)
+  }
 }
 
 function onSelectProfile(profile: CrossSectionProfile): void {

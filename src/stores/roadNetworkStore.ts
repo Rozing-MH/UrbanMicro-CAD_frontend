@@ -171,6 +171,10 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     lanes.value.delete(id)
   }
 
+  function removeHalfEdge(id: string): void {
+    halfEdges.value.delete(id)
+  }
+
   function getLanesBySegment(segmentId: string): Lane[] {
     const result: Lane[] = []
     for (const lane of lanes.value.values()) {
@@ -397,7 +401,7 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     nodeCount, segmentCount, isDrawing,
     addNode, updateNode, removeNode, getNode,
     addSegment, updateSegment, removeSegment, getSegment,
-    addLane, removeLane, getLanesBySegment, getSegmentLaneIds,
+    addLane, removeLane, removeHalfEdge, getLanesBySegment, getSegmentLaneIds,
     rebuildSegmentLanes, rebuildSegmentMeshData, replaceSegmentProfile, createParallelSegmentDraft,
     setLaneArrow, removeLaneArrow,
     startDrawing, updatePreview, confirmDrawing, cancelDrawing,

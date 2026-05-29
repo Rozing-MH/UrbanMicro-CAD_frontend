@@ -11,20 +11,20 @@
           v-for="(lane, i) in workingLanes"
           :key="i"
           class="lane-strip"
-          :class="{ selected: selectedLaneIndex === i }"
+          :class="{ selected: selectedIndex === i }"
           :style="laneStyle(lane)"
           :title="`${lane.direction} ${lane.type} ${lane.width}m`"
-          @click="selectedLaneIndex = i"
+          @click="onSelectLane(i)"
         ></div>
       </div>
-      <div class="width-label">总宽 {{ totalWidth.toFixed(1) }} m · {{ workingLanes.length }} 车道</div>
+      <div class="width-label">总宽 {{ totalWidth.toFixed(1) }} m · {{ workingLanes.length }} 车道 · 正向{{ editorStore.getForwardLaneCount() }} 反向{{ editorStore.getBackwardLaneCount() }}</div>
     </div>
 
-    <div class="lane-editor" v-if="selectedLaneIndex >= 0 && selectedLaneIndex < workingLanes.length">
-      <div class="section-title">车道 #{{ selectedLaneIndex + 1 }}</div>
+    <div class="lane-editor" v-if="selectedIndex >= 0 && selectedIndex < workingLanes.length">
+      <div class="section-title">车道 #{{ selectedIndex + 1 }}</div>
       <label class="param-row">
         <span>方向</span>
-        <select :value="workingLanes[selectedLaneIndex].direction" @change="onLaneField('direction', ($event.target as HTMLSelectElement).value)">
+        <select :value="workingLanes[selectedIndex].direction" @change="onLaneField('direction', ($event.target as HTMLSelectElement).value)">
           <option value="FORWARD">正向</option>
           <option value="BACKWARD">反向</option>
           <option value="BOTH">双向</option>
@@ -32,7 +32,7 @@
       </label>
       <label class="param-row">
         <span>类型</span>
-        <select :value="workingLanes[selectedLaneIndex].type" @change="onLaneField('type', ($event.target as HTMLSelectElement).value)">
+        <select :value="workingLanes[selectedIndex].type" @change="onLaneField('type', ($event.target as HTMLSelectElement).value)">
           <option value="CAR">机动车</option>
           <option value="BUS">公交</option>
           <option value="BIKE">自行车</option>
@@ -43,7 +43,7 @@
         <span>宽度</span>
         <input
           type="number"
-          :value="workingLanes[selectedLaneIndex].width"
+          :value="workingLanes[selectedIndex].width"
           min="2.5" max="4.5" step="0.1"
           @change="onLaneField('width', Number(($event.target as HTMLInputElement).value))"
         />
@@ -52,8 +52,8 @@
     </div>
 
     <div class="lane-actions">
-      <button class="action-btn" @click="addLane">添加车道</button>
-      <button class="action-btn danger" :disabled="workingLanes.length <= 1" @click="removeLane">删除车道</button>
+      <button class="action-btn" @click="onAddLane">添加车道</button>
+      <button class="action-btn danger" :disabled="!canRemoveLane" @click="onRemoveLane">删除车道</button>
     </div>
 
     <div class="median-editor">
@@ -93,119 +93,120 @@
     </div>
 
     <div class="save-row">
-      <input v-model="profileName" type="text" placeholder="模板名称" class="name-input" />
-      <button class="save-btn" :disabled="!profileName.trim()" @click="onSave">保存模板</button>
+      <input :value="editorStore.profileName" @input="editorStore.setProfileName(($event.target as HTMLInputElement).value)" type="text" placeholder="模板名称" class="name-input" />
+      <button class="save-btn" :disabled="!editorStore.profileName.trim()" @click="onSave">保存模板</button>
     </div>
 
     <div class="apply-row">
-      <button class="apply-btn" :disabled="!canApply" @click="$emit('apply', builtProfile)">应用到选中路段</button>
+      <button class="apply-btn" :disabled="!canApply" @click="onApply">应用到选中路段</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive } from 'vue'
-import type { CrossSectionProfile, LaneDef, MedianDef, SidewalkDef, LaneType, LaneDirection } from '@/types/road-network'
+import { ref, computed } from 'vue'
+import type { LaneDef, MedianDef, SidewalkDef, LaneType, LaneDirection } from '@/types/road-network'
+import { useCrossSectionEditorStore } from '@/stores/crossSectionEditorStore'
+import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
+import { useEditorStateStore } from '@/stores/editorStateStore'
 
-const props = defineProps<{
-  initialProfile?: CrossSectionProfile | null
-}>()
+const editorState = useEditorStateStore()
+const roadStore = useRoadNetworkStore()
+const editorStore = useCrossSectionEditorStore()
 
 const emit = defineEmits<{
   close: []
   save: [profile: CrossSectionProfile]
-  apply: [profile: CrossSectionProfile]
 }>()
 
-const profileName = ref('')
-const selectedLaneIndex = ref(0)
+import type { CrossSectionProfile } from '@/types/road-network'
 
-const workingLanes = reactive<LaneDef[]>(
-  props.initialProfile
-    ? props.initialProfile.lanes.map(l => ({ ...l }))
-    : [
-        { id: 'cl1', width: 3.5, type: 'CAR' as LaneType, direction: 'FORWARD' as LaneDirection },
-        { id: 'cl2', width: 3.5, type: 'CAR' as LaneType, direction: 'BACKWARD' as LaneDirection },
-      ],
-)
+const selectedIndex = ref(0)
 
-const workingMedian = reactive<MedianDef>(
-  props.initialProfile ? { ...props.initialProfile.median } : { width: 0, type: 'NONE' },
-)
+const workingLanes = computed(() => editorStore.profile?.lanes ?? [])
+const workingMedian = computed(() => editorStore.profile?.median ?? { width: 0, type: 'NONE' as const })
+const workingSidewalk = computed(() => editorStore.profile?.sidewalk ?? { leftWidth: 1.5, rightWidth: 1.5 })
 
-const workingSidewalk = reactive<SidewalkDef>(
-  props.initialProfile ? { ...props.initialProfile.sidewalk } : { leftWidth: 1.5, rightWidth: 1.5 },
-)
+const totalWidth = computed(() => editorStore.profile?.totalWidth ?? 0)
 
-const totalWidth = computed(() => {
-  let w = workingLanes.reduce((sum, l) => sum + l.width, 0)
-  if (workingMedian.type !== 'NONE') w += workingMedian.width
-  w += workingSidewalk.leftWidth + workingSidewalk.rightWidth
-  return w
+const canRemoveLane = computed(() => {
+  if (!editorStore.profile || editorStore.profile.lanes.length <= 2) return false
+  const remaining = editorStore.profile.lanes.filter((_, i) => i !== selectedIndex.value)
+  const fwd = remaining.filter(l => l.direction === 'FORWARD' || l.direction === 'BOTH').length
+  const bwd = remaining.filter(l => l.direction === 'BACKWARD' || l.direction === 'BOTH').length
+  return fwd >= 1 && bwd >= 1
 })
 
-const canApply = computed(() => workingLanes.length >= 1)
-
-const builtProfile = computed<CrossSectionProfile>(() => ({
-  id: `custom-${Date.now().toString(36)}`,
-  name: profileName.value.trim() || '自定义断面',
-  lanes: workingLanes.map((l, i) => ({ ...l, id: `cl${i}` })),
-  median: { ...workingMedian },
-  sidewalk: { ...workingSidewalk },
-  totalWidth: totalWidth.value,
-}))
-
-let laneCounter = workingLanes.length
+const canApply = computed(() => workingLanes.value.length >= 2 && editorStore.getForwardLaneCount() >= 1 && editorStore.getBackwardLaneCount() >= 1)
 
 function laneStyle(lane: LaneDef): Record<string, string> {
   const palette: Record<string, string> = { CAR: '#4a5160', BIKE: '#3b8d56', BUS: '#a13c3c', TRAM: '#5c5750' }
   return { flex: String(lane.width), background: palette[lane.type] ?? '#4a5160' }
 }
 
+function onSelectLane(index: number): void {
+  selectedIndex.value = index
+}
+
 function onLaneField(field: keyof LaneDef, value: string | number): void {
-  if (selectedLaneIndex.value < 0 || selectedLaneIndex.value >= workingLanes.length) return
-  const lane = workingLanes[selectedLaneIndex.value]
-  if (field === 'width') {
-    lane.width = Math.max(2.5, Math.min(4.5, value as number))
-  } else if (field === 'direction') {
-    lane.direction = value as LaneDirection
-  } else if (field === 'type') {
-    lane.type = value as LaneType
-  }
+  if (selectedIndex.value < 0 || selectedIndex.value >= workingLanes.value.length) return
+  const patch: Partial<LaneDef> = {}
+  if (field === 'width') patch.width = Math.max(2.5, Math.min(4.5, value as number))
+  else if (field === 'direction') patch.direction = value as LaneDirection
+  else if (field === 'type') patch.type = value as LaneType
+  editorStore.updateLane(selectedIndex.value, patch)
 }
 
-function addLane(): void {
-  laneCounter++
-  workingLanes.push({ id: `cl${laneCounter}`, width: 3.5, type: 'CAR', direction: 'BACKWARD' })
-  selectedLaneIndex.value = workingLanes.length - 1
+function onAddLane(): void {
+  editorStore.addLane('BACKWARD', 'CAR', 3.5)
+  selectedIndex.value = workingLanes.value.length - 1
 }
 
-function removeLane(): void {
-  if (workingLanes.length <= 1) return
-  workingLanes.splice(selectedLaneIndex.value, 1)
-  if (selectedLaneIndex.value >= workingLanes.length) {
-    selectedLaneIndex.value = workingLanes.length - 1
+function onRemoveLane(): void {
+  try {
+    editorStore.removeLane(selectedIndex.value)
+    if (selectedIndex.value >= workingLanes.value.length) {
+      selectedIndex.value = workingLanes.value.length - 1
+    }
+  } catch (err: unknown) {
+    editorState.setError(err instanceof Error ? err.message : '无法删除车道')
   }
 }
 
 function onMedianField(field: keyof MedianDef, value: string | number): void {
-  if (field === 'type') workingMedian.type = value as MedianDef['type']
-  else if (field === 'width') workingMedian.width = Math.max(0.5, value as number)
+  const patch: Partial<MedianDef> = {}
+  if (field === 'type') patch.type = value as MedianDef['type']
+  else if (field === 'width') patch.width = Math.max(0.5, value as number)
+  editorStore.updateMedian(patch)
 }
 
 function onSidewalkField(field: keyof SidewalkDef, value: number): void {
-  if (field === 'leftWidth') workingSidewalk.leftWidth = Math.max(0, value)
-  else if (field === 'rightWidth') workingSidewalk.rightWidth = Math.max(0, value)
+  const patch: Partial<SidewalkDef> = {}
+  if (field === 'leftWidth') patch.leftWidth = Math.max(0, value)
+  else if (field === 'rightWidth') patch.rightWidth = Math.max(0, value)
+  editorStore.updateSidewalk(patch)
 }
 
-function onSave(): void {
-  if (!profileName.value.trim()) return
-  const profile: CrossSectionProfile = {
-    ...builtProfile.value,
-    id: `user-${Date.now().toString(36)}`,
-    name: profileName.value.trim(),
+async function onApply(): Promise<void> {
+  const segId = roadStore.selectedSegmentIds.size > 0 ? Array.from(roadStore.selectedSegmentIds)[0] : null
+  if (!segId) {
+    editorState.setError('请先选中一个路段')
+    return
   }
-  emit('save', profile)
+  try {
+    editorStore.applyToSegment(segId)
+  } catch (err: unknown) {
+    editorState.setError(err instanceof Error ? err.message : '应用断面失败')
+  }
+}
+
+async function onSave(): Promise<void> {
+  if (!editorStore.profileName.trim()) return
+  try {
+    await editorStore.saveAsTemplate(editorStore.profileName)
+  } catch (err: unknown) {
+    editorState.setError(err instanceof Error ? err.message : '保存模板失败')
+  }
 }
 </script>
 

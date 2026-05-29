@@ -2,13 +2,190 @@ import type { Point2D, RoadNode, RoadSegment, RoadNetwork } from '@/types/road-n
 
 // ============================================================
 // Topology Healing Service
-// Pure functions for dynamic topology self-healing.
+// Per detailed design: TopologyHealingService class
+//   +healOnSegmentAdd(network, newSegment): void
+//   +healOnSegmentRemove(network, segmentId): void
+//   +splitIntersections(network): void
+//   +mergeDegenerateNodes(network): void
+// All methods are pure functions returning mutation descriptors.
 // ============================================================
 
 export interface SplitResult {
   newNodes: RoadNode[]
   newSegments: RoadSegment[]
   removedSegmentIds: string[]
+  // Half-edges that need to be created for new segments
+  halfEdgeDefs: Array<{ id: string; originNodeId: string; twinId: string; nextId: string; segmentId: string }>
+  // Half-edge IDs that should be removed (for replaced segments)
+  removedHalfEdgeIds: string[]
+}
+
+export interface RemoveHealResult {
+  orphanNodeIds: string[]
+  // Nodes whose connectedSegmentIds need updating after removal
+  updatedNodes: Array<{ id: string; connectedSegmentIds: string[] }>
+  // Half-edge IDs that should be removed for the deleted segment
+  removedHalfEdgeIds: string[]
+}
+
+// ============================================================
+// healOnSegmentAdd — detect intersections, auto-split
+// ============================================================
+
+export function healOnSegmentAdd(
+  newSegment: RoadSegment,
+  network: RoadNetwork,
+  genId: () => string,
+): SplitResult {
+  const result: SplitResult = { newNodes: [], newSegments: [], removedSegmentIds: [], halfEdgeDefs: [], removedHalfEdgeIds: [] }
+  const allIntersections: { point: Point2D; segmentId: string }[] = []
+
+  for (const [id, seg] of network.segments) {
+    if (id === newSegment.id) continue
+    if (seg.startNodeId === newSegment.startNodeId || seg.endNodeId === newSegment.startNodeId) continue
+    if (seg.startNodeId === newSegment.endNodeId || seg.endNodeId === newSegment.endNodeId) continue
+    const pts = findIntersections(newSegment.centerLine, seg.centerLine)
+    for (const pt of pts) {
+      allIntersections.push({ point: pt, segmentId: id })
+    }
+  }
+
+  if (allIntersections.length === 0) return result
+
+  const processed = new Set<string>()
+  for (const { point, segmentId } of allIntersections) {
+    if (processed.has(segmentId)) continue
+    processed.add(segmentId)
+    const existingSeg = network.segments.get(segmentId)
+    if (!existingSeg) continue
+    const split = splitSegmentAtPoint(existingSeg, point, network.nodes, genId)
+    if (!split) continue
+    result.newNodes.push(split.node)
+    result.newSegments.push(split.seg1, split.seg2)
+    result.removedSegmentIds.push(segmentId)
+    // Old half-edges for the replaced segment
+    result.removedHalfEdgeIds.push(`${segmentId}:he:forward`, `${segmentId}:he:backward`)
+    // New half-edges for the two sub-segments
+    for (const seg of [split.seg1, split.seg2]) {
+      result.halfEdgeDefs.push(
+        { id: `${seg.id}:he:forward`, originNodeId: seg.startNodeId, twinId: `${seg.id}:he:backward`, nextId: '', segmentId: seg.id },
+        { id: `${seg.id}:he:backward`, originNodeId: seg.endNodeId, twinId: `${seg.id}:he:forward`, nextId: '', segmentId: seg.id },
+      )
+    }
+  }
+
+  return result
+}
+
+// ============================================================
+// healOnSegmentRemove — recalculate topology after segment delete
+// Cross intersection → T intersection degradation, orphan node cleanup
+// ============================================================
+
+export function healOnSegmentRemove(
+  segmentId: string,
+  network: RoadNetwork,
+): RemoveHealResult {
+  const result: RemoveHealResult = { orphanNodeIds: [], updatedNodes: [], removedHalfEdgeIds: [] }
+
+  // Half-edges for the removed segment
+  result.removedHalfEdgeIds.push(`${segmentId}:he:forward`, `${segmentId}:he:backward`)
+
+  const seg = network.segments.get(segmentId)
+  if (!seg) return result
+
+  // Check endpoint nodes for degradation
+  for (const nodeId of [seg.startNodeId, seg.endNodeId]) {
+    const node = network.nodes.get(nodeId)
+    if (!node) continue
+    const remaining = node.connectedSegmentIds.filter(id => id !== segmentId)
+    if (remaining.length === 0) {
+      result.orphanNodeIds.push(nodeId)
+    } else {
+      result.updatedNodes.push({ id: nodeId, connectedSegmentIds: remaining })
+    }
+  }
+
+  return result
+}
+
+// ============================================================
+// splitIntersections — scan all segments for pairwise intersections
+// ============================================================
+
+export function splitIntersections(
+  network: RoadNetwork,
+  genId: () => string,
+): SplitResult {
+  const result: SplitResult = { newNodes: [], newSegments: [], removedSegmentIds: [], halfEdgeDefs: [], removedHalfEdgeIds: [] }
+  const segList = Array.from(network.segments.values())
+  const processed = new Set<string>()
+
+  for (let i = 0; i < segList.length; i++) {
+    for (let j = i + 1; j < segList.length; j++) {
+      const a = segList[i]
+      const b = segList[j]
+      // Skip if sharing a node
+      if (a.startNodeId === b.startNodeId || a.endNodeId === b.startNodeId ||
+          a.startNodeId === b.endNodeId || a.endNodeId === b.endNodeId) continue
+      // Skip already-replaced segments
+      if (processed.has(a.id) || processed.has(b.id)) continue
+
+      const pts = findIntersections(a.centerLine, b.centerLine)
+      for (const pt of pts) {
+        // Split segment a
+        if (!processed.has(a.id)) {
+          const splitA = splitSegmentAtPoint(a, pt, network.nodes, genId)
+          if (splitA) {
+            processed.add(a.id)
+            result.newNodes.push(splitA.node)
+            result.newSegments.push(splitA.seg1, splitA.seg2)
+            result.removedSegmentIds.push(a.id)
+            result.removedHalfEdgeIds.push(`${a.id}:he:forward`, `${a.id}:he:backward`)
+            for (const seg of [splitA.seg1, splitA.seg2]) {
+              result.halfEdgeDefs.push(
+                { id: `${seg.id}:he:forward`, originNodeId: seg.startNodeId, twinId: `${seg.id}:he:backward`, nextId: '', segmentId: seg.id },
+                { id: `${seg.id}:he:backward`, originNodeId: seg.endNodeId, twinId: `${seg.id}:he:forward`, nextId: '', segmentId: seg.id },
+              )
+            }
+          }
+        }
+        // Split segment b
+        if (!processed.has(b.id)) {
+          const splitB = splitSegmentAtPoint(b, pt, network.nodes, genId)
+          if (splitB) {
+            processed.add(b.id)
+            result.newNodes.push(splitB.node)
+            result.newSegments.push(splitB.seg1, splitB.seg2)
+            result.removedSegmentIds.push(b.id)
+            result.removedHalfEdgeIds.push(`${b.id}:he:forward`, `${b.id}:he:backward`)
+            for (const seg of [splitB.seg1, splitB.seg2]) {
+              result.halfEdgeDefs.push(
+                { id: `${seg.id}:he:forward`, originNodeId: seg.startNodeId, twinId: `${seg.id}:he:backward`, nextId: '', segmentId: seg.id },
+                { id: `${seg.id}:he:backward`, originNodeId: seg.endNodeId, twinId: `${seg.id}:he:forward`, nextId: '', segmentId: seg.id },
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return result
+}
+
+// ============================================================
+// mergeDegenerateNodes — merge orphan nodes and co-located nodes
+// ============================================================
+
+export function mergeDegenerateNodes(network: RoadNetwork): string[] {
+  const orphans: string[] = []
+  for (const [id, node] of network.nodes) {
+    if (node.connectedSegmentIds.length === 0) {
+      orphans.push(id)
+    }
+  }
+  return orphans
 }
 
 // ============================================================
@@ -64,7 +241,6 @@ function splitSegmentAtPoint(
   const cl = segment.centerLine
   if (cl.length < 2) return null
 
-  // Find closest centerLine segment
   let bestIdx = 0
   let bestDist = Infinity
   let bestT = 0
@@ -81,7 +257,6 @@ function splitSegmentAtPoint(
     }
   }
 
-  // Don't split too close to existing endpoints
   const totalLen = approximatePolylineLength(cl)
   let accumLen = 0
   for (let i = 0; i < bestIdx; i++) {
@@ -90,7 +265,6 @@ function splitSegmentAtPoint(
   accumLen += dist2D(cl[bestIdx], cl[bestIdx + 1]) * bestT
   if (accumLen < 1 || accumLen > totalLen - 1) return null
 
-  // Split centerLine
   const cl1: Point2D[] = []
   for (let i = 0; i <= bestIdx; i++) cl1.push({ ...cl[i] })
   cl1.push({ ...point })
@@ -118,11 +292,7 @@ function splitSegmentAtPoint(
     endNodeId: newNodeId,
     centerLine: cl1,
     length: len1,
-    elevation: {
-      startZ: segment.elevation.startZ,
-      endZ: newNode.elevation,
-      mode: segment.elevation.mode,
-    },
+    elevation: { startZ: segment.elevation.startZ, endZ: newNode.elevation, mode: segment.elevation.mode },
   }
   const seg2: RoadSegment = {
     ...segment,
@@ -130,70 +300,10 @@ function splitSegmentAtPoint(
     startNodeId: newNodeId,
     centerLine: cl2,
     length: len2,
-    elevation: {
-      startZ: newNode.elevation,
-      endZ: segment.elevation.endZ,
-      mode: segment.elevation.mode,
-    },
+    elevation: { startZ: newNode.elevation, endZ: segment.elevation.endZ, mode: segment.elevation.mode },
   }
 
   return { node: newNode, seg1, seg2 }
-}
-
-// ============================================================
-// healOnSegmentAdd — detect intersections, auto-split
-// ============================================================
-
-export function healOnSegmentAdd(
-  newSegment: RoadSegment,
-  network: RoadNetwork,
-  genId: () => string,
-): SplitResult {
-  const result: SplitResult = { newNodes: [], newSegments: [], removedSegmentIds: [] }
-  const allIntersections: { point: Point2D; segmentId: string }[] = []
-
-  for (const [id, seg] of network.segments) {
-    if (id === newSegment.id) continue
-    // Skip segments sharing a node with the new segment
-    if (seg.startNodeId === newSegment.startNodeId || seg.endNodeId === newSegment.startNodeId) continue
-    if (seg.startNodeId === newSegment.endNodeId || seg.endNodeId === newSegment.endNodeId) continue
-    const pts = findIntersections(newSegment.centerLine, seg.centerLine)
-    for (const pt of pts) {
-      allIntersections.push({ point: pt, segmentId: id })
-    }
-  }
-
-  if (allIntersections.length === 0) return result
-
-  // Split each intersected existing segment
-  const processed = new Set<string>()
-  for (const { point, segmentId } of allIntersections) {
-    if (processed.has(segmentId)) continue
-    processed.add(segmentId)
-    const existingSeg = network.segments.get(segmentId)
-    if (!existingSeg) continue
-    const split = splitSegmentAtPoint(existingSeg, point, network.nodes, genId)
-    if (!split) continue
-    result.newNodes.push(split.node)
-    result.newSegments.push(split.seg1, split.seg2)
-    result.removedSegmentIds.push(segmentId)
-  }
-
-  return result
-}
-
-// ============================================================
-// mergeDegenerateNodes — remove orphan nodes with 0 connections
-// ============================================================
-
-export function findOrphanNodes(network: RoadNetwork): string[] {
-  const orphans: string[] = []
-  for (const [id, node] of network.nodes) {
-    if (node.connectedSegmentIds.length === 0) {
-      orphans.push(id)
-    }
-  }
-  return orphans
 }
 
 // ============================================================

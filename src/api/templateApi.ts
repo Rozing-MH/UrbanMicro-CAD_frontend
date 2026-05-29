@@ -1,6 +1,12 @@
 import apiClient, { type ApiResponse } from './client'
 import type { CrossSectionProfile } from '@/types/road-network'
 
+export interface UserTemplatePayload {
+  name: string
+  category: 'CUSTOM'
+  profile: CrossSectionProfile
+}
+
 export interface TemplateDTO {
   id: string
   name: string
@@ -35,6 +41,11 @@ export const templateApi = {
       const res = await apiClient.get<ApiResponse<CrossSectionProfile>>(`/templates/cross-sections/${id}`)
       return res.data.data ?? null
     }
+  },
+
+  async saveCrossSection(payload: UserTemplatePayload): Promise<TemplateDTO | null> {
+    const res = await apiClient.post<ApiResponse<TemplateDTO>>('/templates', payload)
+    return res.data.data ?? null
   },
 
   async listAssets(category?: string): Promise<Array<{ id: string; name: string; category: string; thumbnail: string }>> {
