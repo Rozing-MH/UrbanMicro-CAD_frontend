@@ -77,6 +77,7 @@ import { buildSegmentGeometry, createSegmentFromPoints } from '@/utils/roadGeome
 import { getProfileById } from '@/utils/roadProfiles'
 import { buildQuadraticCenterLine, approximateCurveLength } from '@/adapters/BezierJsAdapter'
 import { smartSnap, type SnapResult, type GuideLine } from '@/services/snapService'
+import { healOnSegmentAdd } from '@/services/topologyHealingService'
 import LaneArrowPicker from '@/components/panels/LaneArrowPicker.vue'
 import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection, ElevationMode } from '@/types'
 import { SLOPE_LIMITS } from '@/types/road-network'
@@ -570,6 +571,23 @@ function offsetCenterLineLocal(centerLine: Point2D[], offset: number): Point2D[]
   return result
 }
 
+function applyTopologyHealing(newSegment: RoadSegment): void {
+  const network = { nodes: roadStore.nodes, segments: roadStore.segments, lanes: roadStore.lanes, laneArrows: roadStore.laneArrows, halfEdges: roadStore.halfEdges }
+  const result = healOnSegmentAdd(newSegment, network, genId)
+  for (const nodeId of result.removedSegmentIds) {
+    roadStore.removeSegment(nodeId)
+    roadRenderer.removeSegment(nodeId)
+  }
+  for (const node of result.newNodes) {
+    roadStore.addNode(node)
+    roadRenderer.addNode(node)
+  }
+  for (const seg of result.newSegments) {
+    roadStore.addSegment(seg)
+    roadRenderer.addSegment(seg)
+  }
+}
+
 function clearPreview(): void {
   const scene = sceneRef.value
   if (previewGroup && scene) {
@@ -698,6 +716,7 @@ async function handleRoadDraw(point: Point2D, sessionId: HistorySessionId): Prom
       await executeHistoryCommand(cmd, sessionId)
       if (!isCurrentHistorySession(sessionId)) return
       roadRenderer.addSegment(segment)
+      applyTopologyHealing(segment)
       clearPreview()
       resetCurveState()
       if (editorStore.continuousDrawing) {
@@ -737,6 +756,7 @@ async function handleRoadDraw(point: Point2D, sessionId: HistorySessionId): Prom
       await executeHistoryCommand(cmd, sessionId)
       if (!isCurrentHistorySession(sessionId)) return
       roadRenderer.addSegment(segment)
+      applyTopologyHealing(segment)
       clearPreview()
       if (editorStore.continuousDrawing) {
         roadStore.startDrawing(ctx.mode, point, found.id)
