@@ -76,6 +76,7 @@ import {
 import { buildSegmentGeometry, createSegmentFromPoints } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
 import { buildQuadraticCenterLine, approximateCurveLength } from '@/adapters/BezierJsAdapter'
+import { smartSnap, type SnapResult, type GuideLine } from '@/services/snapService'
 import LaneArrowPicker from '@/components/panels/LaneArrowPicker.vue'
 import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection, ElevationMode } from '@/types'
 import { SLOPE_LIMITS } from '@/types/road-network'
@@ -153,7 +154,7 @@ const hint = computed(() => {
       const ctx = roadStore.drawingContext
       if (ctx.mode === 'CURVE' && curveEndPoint.value) return '移动鼠标调整曲线弧度，左键确认，Esc 取消'
       if (ctx.mode === 'CURVE') return '左键放置曲线终点，Esc 取消'
-      return '左键放置道路节点，Esc 结束'
+      return '左键放置道路节点，Esc 结束，Shift 自由模式'
     }
     case 'ROAD_UPGRADE': return '点击路段，使用左侧当前断面原位升级'
     case 'PARALLEL_ROAD': return '点击路段，按当前断面宽度生成平行路'
@@ -197,9 +198,71 @@ function screenToWorld(event: MouseEvent): Point2D | null {
 }
 
 function snapPoint(p: Point2D): Point2D {
-  if (!editorStore.snapToGrid) return p
-  const grid = editorStore.gridSize
-  return { x: Math.round(p.x / grid) * grid, y: Math.round(p.y / grid) * grid }
+  const ctx = roadStore.drawingContext
+  const result = smartSnap(p, roadStore.nodes, roadStore.segments, {
+    gridSnap: editorStore.snapToGrid,
+    gridSize: editorStore.gridSize,
+    roadSnap: editorStore.snapToRoad,
+    startNodeId: ctx.startNodeId,
+    startPoint: ctx.startPoint,
+    freeMode: shiftHeld.value,
+  })
+  lastSnapResult.value = result
+  return result.point
+}
+
+function updateSnapVisuals(result: SnapResult | null): void {
+  const scene = sceneRef.value
+  if (!scene) return
+
+  // Remove old guide line
+  if (guideLineMesh) {
+    scene.remove(guideLineMesh)
+    guideLineMesh.geometry.dispose()
+    guideLineMesh = null
+  }
+  // Remove old snap highlight
+  if (snapHighlightMesh) {
+    scene.remove(snapHighlightMesh)
+    snapHighlightMesh = null
+  }
+
+  if (!result) return
+
+  // Highlight snapped node
+  if (result.snappedToNode) {
+    const node = roadStore.nodes.get(result.snappedToNode)
+    if (node) {
+      snapHighlightMesh = new THREE.Mesh(snapHighlightGeometry, snapHighlightMaterial)
+      snapHighlightMesh.rotation.x = -Math.PI / 2
+      snapHighlightMesh.position.set(node.position.x, 0.15, node.position.y)
+      scene.add(snapHighlightMesh)
+    }
+  }
+
+  // Draw guide line for angle snap
+  if (result.angleSnapped && result.guideLine) {
+    const gl = result.guideLine
+    const pts = [new THREE.Vector3(gl.start.x, 0.1, gl.start.y), new THREE.Vector3(gl.end.x, 0.1, gl.end.y)]
+    const geo = new THREE.BufferGeometry().setFromPoints(pts)
+    guideLineMesh = new THREE.Line(geo, guideLineMaterial)
+    guideLineMesh.computeLineDistances()
+    scene.add(guideLineMesh)
+  }
+}
+
+function clearSnapVisuals(): void {
+  const scene = sceneRef.value
+  if (guideLineMesh && scene) {
+    scene.remove(guideLineMesh)
+    guideLineMesh.geometry.dispose()
+    guideLineMesh = null
+  }
+  if (snapHighlightMesh && scene) {
+    scene.remove(snapHighlightMesh)
+    snapHighlightMesh = null
+  }
+  lastSnapResult.value = null
 }
 
 interface LaneAnchor {
@@ -221,6 +284,15 @@ const curveEndPoint = ref<Point2D | null>(null)
 const curveEndNodeId = ref<string | null>(null)
 const curveEndNodeCreated = ref(false)
 const curveEndNode = ref<RoadNode | null>(null)
+
+// Smart snap state
+const shiftHeld = ref(false)
+const lastSnapResult = ref<SnapResult | null>(null)
+let guideLineMesh: THREE.Line | null = null
+let snapHighlightMesh: THREE.Mesh | null = null
+const snapHighlightGeometry = new THREE.RingGeometry(0.8, 1.2, 16)
+const snapHighlightMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })
+const guideLineMaterial = new THREE.LineDashedMaterial({ color: 0x00ff88, dashSize: 0.5, gapSize: 0.3, transparent: true, opacity: 0.6 })
 const selectedLaneAnchor = ref<LaneAnchor | null>(null)
 const laneAnchorMeshes: Map<string, THREE.Mesh> = new Map()
 const laneConnectorMeshes: Map<string, THREE.Line> = new Map()
@@ -528,6 +600,7 @@ function onPointerMove(event: MouseEvent): void {
   const snapped = snapPoint(world)
   if (editorStore.activeTool === 'ROAD_DRAW' && roadStore.drawingContext.state === 'DRAWING') {
     roadStore.updatePreview(snapped)
+    updateSnapVisuals(lastSnapResult.value)
     if (roadStore.drawingContext.startPoint) {
       const profile = getProfileById(editorStore.activeProfileId)
       // In CURVE mode with endpoint set, mouse controls the Bezier handle
@@ -543,6 +616,8 @@ function onPointerMove(event: MouseEvent): void {
         drawPreviewRoad(roadStore.drawingContext.startPoint, snapped, profile)
       }
     }
+  } else {
+    clearSnapVisuals()
   }
 }
 
@@ -1184,6 +1259,10 @@ function onContextMenu(event: MouseEvent): void {
 const ELEVATION_STEP = 1
 
 function onKeyDown(event: KeyboardEvent): void {
+  if (event.key === 'Shift') {
+    shiftHeld.value = true
+    return
+  }
   if (event.key === 'Escape') {
     if (isDragging.value && dragNodeId.value && dragStartNodePos.value) {
       roadStore.updateNode(dragNodeId.value, { position: dragStartNodePos.value })
@@ -1243,6 +1322,12 @@ function onKeyDown(event: KeyboardEvent): void {
   }
 }
 
+function onKeyUp(event: KeyboardEvent): void {
+  if (event.key === 'Shift') {
+    shiftHeld.value = false
+  }
+}
+
 watch(
   () => evaluationStore.evalMode,
   () => {
@@ -1293,6 +1378,7 @@ onMounted(() => {
   containerRef.value?.addEventListener('pointerup', onPointerUp)
   containerRef.value?.addEventListener('contextmenu', onContextMenu)
   window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('keyup', onKeyUp)
   syncRendererWithStore()
   renderer.startRenderLoop(() => {
     if (
@@ -1330,6 +1416,11 @@ onBeforeUnmount(() => {
   containerRef.value?.removeEventListener('pointerup', onPointerUp)
   containerRef.value?.removeEventListener('contextmenu', onContextMenu)
   window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('keyup', onKeyUp)
+  clearSnapVisuals()
+  snapHighlightGeometry.dispose()
+  snapHighlightMaterial.dispose()
+  guideLineMaterial.dispose()
   clearLaneConnectorState()
   const scene = sceneRef.value
   if (scene) {

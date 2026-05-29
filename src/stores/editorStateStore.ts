@@ -144,6 +144,10 @@ export const useEditorStateStore = defineStore('editorState', () => {
     snapToGrid.value = !snapToGrid.value
   }
 
+  function toggleRoadSnap(): void {
+    snapToRoad.value = !snapToRoad.value
+  }
+
   function setGridSize(size: number): void {
     gridSize.value = Math.max(0.1, size)
   }
@@ -177,7 +181,7 @@ export const useEditorStateStore = defineStore('editorState', () => {
     historyPointer, historyLength, historySessionId, canUndo, canRedo,
     setActiveTool, setViewMode, updateCamera, setZoom, setPanelState,
     setLoading, showNotification, dismissNotification, setError, clearError,
-    toggleSnap, setGridSize, setActiveProfile,
+    toggleSnap, toggleRoadSnap, setGridSize, setActiveProfile,
     toggleContinuousDrawing, toggleGrid,
     updateHistoryState, setHistorySession,
   }

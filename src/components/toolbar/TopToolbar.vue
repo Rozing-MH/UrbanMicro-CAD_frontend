@@ -33,6 +33,10 @@
         网格吸附
       </label>
       <label class="snap-toggle">
+        <input type="checkbox" :checked="editor.snapToRoad" @change="editor.toggleRoadSnap()" />
+        道路吸附
+      </label>
+      <label class="snap-toggle">
         <input type="checkbox" :checked="editor.showGrid" @change="editor.toggleGrid()" />
         显示网格
       </label>
