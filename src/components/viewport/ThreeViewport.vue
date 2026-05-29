@@ -80,8 +80,9 @@ import { buildQuadraticCenterLine, approximateCurveLength } from '@/adapters/Bez
 import { smartSnap, buildViewTransform, type SnapResult, type GuideLine } from '@/services/snapService'
 import { healOnSegmentAdd, recalculateBoundary } from '@/services/topologyHealingService'
 import LaneArrowPicker from '@/components/panels/LaneArrowPicker.vue'
-import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection, ElevationMode, DrawingMode } from '@/types'
+import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection, ElevationMode, DrawingMode, AngleAnnotation } from '@/types'
 import { SLOPE_LIMITS } from '@/types/road-network'
+import { calculateAngleAnnotation, segmentDirectionAtNode } from '@/services/angleAnnotationService'
 import type { TurnRestriction as TurnRestrictionType } from '@/types/traffic-rule'
 
 const DEFAULT_PROFILE: CrossSectionProfile = {
@@ -358,6 +359,9 @@ const arrowPickerDirections = ref<TurnDirection[]>([])
 const laneArrowMeshes: Map<string, THREE.Sprite> = new Map()
 const arrowSpriteMaterial = new THREE.SpriteMaterial({ color: 0xffffff, opacity: 0.9 })
 
+// Angle annotation state (FR1.9)
+let angleAnnotationGroup: THREE.Group | null = null
+
 // Turn restriction picker state
 const trPickerVisible = ref(false)
 const trPickerPosition = ref({ x: 0, y: 0 })
@@ -448,6 +452,153 @@ function createMeasurementSprite(text: string): THREE.Sprite {
   const sprite = new THREE.Sprite(spriteMat)
   sprite.scale.set(4, 1, 1)
   return sprite
+}
+
+// ============================================================
+// Angle Annotation (FR1.9)
+// ============================================================
+
+function createAngleSprite(text: string): THREE.Sprite {
+  const canvas = document.createElement('canvas')
+  const W = 192, H = 48
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = 'rgba(80, 40, 180, 0.75)'
+  ctx.beginPath()
+  ctx.moveTo(8, 0)
+  ctx.lineTo(W - 8, 0)
+  ctx.quadraticCurveTo(W, 0, W, 8)
+  ctx.lineTo(W, H - 8)
+  ctx.quadraticCurveTo(W, H, W - 8, H)
+  ctx.lineTo(8, H)
+  ctx.quadraticCurveTo(0, H, 0, H - 8)
+  ctx.lineTo(0, 8)
+  ctx.quadraticCurveTo(0, 0, 8, 0)
+  ctx.closePath()
+  ctx.fill()
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 24px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, W / 2, H / 2)
+  const texture = new THREE.CanvasTexture(canvas)
+  const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false })
+  const sprite = new THREE.Sprite(spriteMat)
+  sprite.scale.set(3, 0.75, 1)
+  return sprite
+}
+
+/** 创建两条路段夹角的弧线可视化 */
+function createAngleArc(
+  nodePos: Point2D,
+  elevation: number,
+  nodeId: string,
+  seg1: RoadSegment,
+  seg2: RoadSegment,
+): THREE.Line | null {
+  const dir1 = segmentDirectionAtNode(seg1, nodeId)
+  const dir2 = segmentDirectionAtNode(seg2, nodeId)
+  if (!dir1 || !dir2) return null
+
+  const m1 = Math.sqrt(dir1.x * dir1.x + dir1.y * dir1.y)
+  const m2 = Math.sqrt(dir2.x * dir2.x + dir2.y * dir2.y)
+  if (m1 < 1e-9 || m2 < 1e-9) return null
+
+  // Normalize direction vectors
+  const n1 = { x: dir1.x / m1, y: dir1.y / m1 }
+  const n2 = { x: dir2.x / m2, y: dir2.y / m2 }
+
+  // Draw arc from dir1 to dir2
+  const ARC_RADIUS = 2.0
+  const arcPoints: THREE.Vector3[] = []
+  const startAngle = Math.atan2(n1.y, n1.x)
+  const endAngle = Math.atan2(n2.y, n2.x)
+
+  // Determine shortest arc direction
+  let delta = endAngle - startAngle
+  if (delta > Math.PI) delta -= 2 * Math.PI
+  if (delta < -Math.PI) delta += 2 * Math.PI
+
+  const STEPS = Math.max(8, Math.ceil(Math.abs(delta) / (Math.PI / 16)))
+  for (let i = 0; i <= STEPS; i++) {
+    const t = i / STEPS
+    const a = startAngle + delta * t
+    arcPoints.push(new THREE.Vector3(
+      nodePos.x + Math.cos(a) * ARC_RADIUS,
+      elevation + 0.15,
+      nodePos.y + Math.sin(a) * ARC_RADIUS,
+    ))
+  }
+
+  const geom = new THREE.BufferGeometry().setFromPoints(arcPoints)
+  const mat = new THREE.LineBasicMaterial({ color: 0x9966ff, transparent: true, opacity: 0.8 })
+  return new THREE.Line(geom, mat)
+}
+
+/** 更新选中节点的夹角标注 */
+function updateAngleAnnotations(): void {
+  clearAngleAnnotations()
+
+  const scene = sceneRef.value
+  if (!scene) return
+
+  // Only show angle annotations when a node with ≥2 segments is selected
+  const selectedNodeIdIter = roadStore.selectedNodeIds.values().next()
+  if (selectedNodeIdIter.done) return
+  const nodeId = selectedNodeIdIter.value
+  const node = roadStore.getNode(nodeId)
+  if (!node || node.connectedSegmentIds.length < 2) return
+
+  const annotation = calculateAngleAnnotation(node, roadStore.segments)
+  if (annotation.pairs.length === 0) return
+
+  const group = new THREE.Group()
+  const E = node.elevation
+
+  // Create a label sprite for each angle pair
+  for (let i = 0; i < annotation.pairs.length; i++) {
+    const pair = annotation.pairs[i]
+    const seg1 = roadStore.getSegment(pair.fromSegmentId)
+    const seg2 = roadStore.getSegment(pair.toSegmentId)
+    if (!seg1 || !seg2) continue
+
+    // Angle label sprite
+    const sprite = createAngleSprite(`${pair.angleDeg.toFixed(1)}°`)
+
+    // Position the sprite offset from the node, spread labels vertically
+    const offsetY = 2.5 + i * 1.2
+    sprite.position.set(node.position.x, E + offsetY, node.position.y)
+    group.add(sprite)
+
+    // Angle arc visualization
+    const arc = createAngleArc(node.position, E, nodeId, seg1, seg2)
+    if (arc) group.add(arc)
+  }
+
+  scene.add(group)
+  angleAnnotationGroup = group
+}
+
+/** 清除夹角标注 */
+function clearAngleAnnotations(): void {
+  if (!angleAnnotationGroup) return
+  const scene = sceneRef.value
+  if (scene) scene.remove(angleAnnotationGroup)
+  // Always dispose resources regardless of scene availability
+  angleAnnotationGroup.traverse((child) => {
+    if (child instanceof THREE.Line) {
+      child.geometry.dispose()
+      if (child.material instanceof THREE.Material) child.material.dispose()
+    }
+    if (child instanceof THREE.Sprite) {
+      if (child.material instanceof THREE.SpriteMaterial && child.material.map) {
+        child.material.map.dispose()
+      }
+      child.material.dispose()
+    }
+  })
+  angleAnnotationGroup = null
 }
 
 function drawPreviewRoad(
@@ -884,6 +1035,8 @@ function rebuildSegmentsForNode(nodeId: string): void {
   }
   // Recalculate intersection boundary after segments changed
   recalculateBoundaryForNode(nodeId)
+  // Update angle annotations for this node (e.g. during drag)
+  updateAngleAnnotations()
 }
 
 function onPointerUp(): void {
@@ -1422,7 +1575,17 @@ watch(
 
 watch(
   () => roadStore.topologyVersion,
-  () => syncRendererWithStore(),
+  () => {
+    syncRendererWithStore()
+    updateAngleAnnotations()
+  },
+)
+
+// Update angle annotations when node selection changes
+watch(
+  () => roadStore.selectedNodeIds,
+  () => updateAngleAnnotations(),
+  { deep: true },
 )
 
 watch(
@@ -1511,6 +1674,7 @@ onBeforeUnmount(() => {
   snapHighlightMaterial.dispose()
   guideLineMaterial.dispose()
   clearLaneConnectorState()
+  clearAngleAnnotations()
   const scene = sceneRef.value
   if (scene) {
     for (const [, line] of laneConnectorMeshes) {

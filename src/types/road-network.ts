@@ -179,6 +179,21 @@ export interface DrawingContext {
 }
 
 // ============================================================
+// Angle Annotation (FR1.9)
+// ============================================================
+
+export interface AnglePair {
+  fromSegmentId: string
+  toSegmentId: string
+  angleDeg: number
+}
+
+export interface AngleAnnotation {
+  nodeId: string
+  pairs: AnglePair[]
+}
+
+// ============================================================
 // Topology Data
 // ============================================================
 
