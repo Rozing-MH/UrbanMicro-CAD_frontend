@@ -164,6 +164,7 @@ function setEvalDelay(): void {
 function setEvalLOS(): void {
   editor.setViewMode('TRAFFIC_VOLUME')
   evalStore.setEvalMode('LOS')
+  evalStore.setHeatmapConfig({ mode: 'LOS' })
 }
 
 function setHiddenView(): void {

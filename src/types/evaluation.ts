@@ -34,7 +34,7 @@ export function delayToLOS(delay: number): LOSGrade {
   return 'F'
 }
 
-export type HeatmapMode = 'OFF' | 'VOLUME' | 'SPEED' | 'CONGESTION'
+export type HeatmapMode = 'OFF' | 'VOLUME' | 'SPEED' | 'CONGESTION' | 'LOS'
 
 export interface HeatmapConfig {
   mode: HeatmapMode

@@ -3,10 +3,17 @@
     <div v-if="hint" class="viewport-hint">{{ hint }}</div>
     <div v-if="evaluationStore.evalMode !== 'NONE'" class="viewport-legend">
       <div class="legend-title">{{ legendTitle }}</div>
-      <div class="legend-bar"></div>
-      <div class="legend-labels">
-        <span>低</span><span>中</span><span>高</span>
-      </div>
+      <template v-if="evaluationStore.evalMode === 'LOS'">
+        <div class="legend-los">
+          <span v-for="g in ['A','B','C','D','E','F']" :key="g" class="los-cell" :data-grade="g">{{ g }}</span>
+        </div>
+      </template>
+      <template v-else>
+        <div class="legend-bar"></div>
+        <div class="legend-labels">
+          <span>低</span><span>中</span><span>高</span>
+        </div>
+      </template>
     </div>
     <LaneArrowPicker
       :visible="arrowPickerVisible"
@@ -57,6 +64,7 @@ import { useCameraControls } from '@/composables/useCameraControls'
 import { useGizmoControls } from '@/composables/useGizmoControls'
 import { useNodeAdjustmentStore, type GizmoMode } from '@/stores/nodeAdjustmentStore'
 import { useHeatmap } from '@/composables/useHeatmap'
+import { useLOSBadges } from '@/composables/useLOSBadges'
 import { useGroundGrid } from '@/composables/useGroundGrid'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useEditorStateStore } from '@/stores/editorStateStore'
@@ -145,6 +153,7 @@ const gizmoControls = useGizmoControls(
   commitGizmoDrag,
 )
 const heatmap = useHeatmap(sceneRef)
+const losBadges = useLOSBadges(sceneRef)
 const groundGrid = useGroundGrid(sceneRef)
 
 function genId(): string {
@@ -2042,8 +2051,10 @@ watch(
   () => {
     if (evaluationStore.evalMode === 'NONE') {
       heatmap.clearHeatmap()
+      losBadges.clearLOSBadges()
       return
     }
+    // Update segment heatmaps
     for (const segment of roadStore.segments.values()) {
       const metric = evaluationStore.segmentMetrics.get(segment.id)
       if (!metric) continue
@@ -2053,6 +2064,19 @@ watch(
         existingMesh,
         metric,
         evaluationStore.heatmapConfig,
+      )
+    }
+    // Update intersection LOS badges
+    losBadges.clearLOSBadges()
+    for (const [nodeId, result] of evaluationStore.results) {
+      const node = roadStore.getNode(nodeId)
+      if (!node) continue
+      losBadges.updateLOSBadge(
+        nodeId,
+        node.position.x,
+        node.position.y,
+        node.elevation,
+        result.grade,
       )
     }
   },
@@ -2104,6 +2128,8 @@ watch(
   (newState) => {
     if (newState === 'IDLE') {
       evaluationStore.clear()
+      heatmap.clearHeatmap()
+      losBadges.clearLOSBadges()
     }
   },
 )
@@ -2175,6 +2201,21 @@ onMounted(() => {
           // Bridge lane metrics to evaluation store
           if (simStore.laneMetrics.length > 0) {
             evaluationStore.updateFromSimulation(simStore.laneMetrics)
+            // Refresh LOS badges when evaluation data updates
+            if (evaluationStore.evalMode !== 'NONE') {
+              losBadges.clearLOSBadges()
+              for (const [nodeId, result] of evaluationStore.results) {
+                const node = roadStore.getNode(nodeId)
+                if (!node) continue
+                losBadges.updateLOSBadge(
+                  nodeId,
+                  node.position.x,
+                  node.position.y,
+                  node.elevation,
+                  result.grade,
+                )
+              }
+            }
           }
         })
       }
@@ -2236,6 +2277,8 @@ onBeforeUnmount(() => {
   laneArrowMeshes.clear()
   cameraControls.detach()
   gizmoControls.dispose()
+  heatmap.dispose()
+  losBadges.dispose()
   renderer.dispose()
 })
 </script>
@@ -2286,6 +2329,28 @@ onBeforeUnmount(() => {
   font-size: 11px;
   color: #aaa;
 }
+.legend-los {
+  display: flex;
+  gap: 3px;
+  margin-top: 4px;
+}
+.los-cell {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.los-cell[data-grade='A'] { background: #2ecc71; color: #fff; }
+.los-cell[data-grade='B'] { background: #58c177; color: #fff; }
+.los-cell[data-grade='C'] { background: #f1c40f; color: #1f232b; }
+.los-cell[data-grade='D'] { background: #e67e22; color: #fff; }
+.los-cell[data-grade='E'] { background: #e74c3c; color: #fff; }
+.los-cell[data-grade='F'] { background: #c0392b; color: #fff; }
 .tr-picker {
   position: fixed;
   z-index: 9999;

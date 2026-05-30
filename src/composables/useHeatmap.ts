@@ -1,10 +1,21 @@
 import * as THREE from 'three'
 import { type Ref } from 'vue'
-import type { HeatmapConfig, HeatmapMode, SegmentMetric } from '@/types/evaluation'
+import type { HeatmapConfig, HeatmapMode, LOSGrade, SegmentMetric } from '@/types/evaluation'
+
+/** LOS grade → numeric value for heatmap color mapping (A=0, F=1) */
+const LOS_NUMERIC: Record<LOSGrade, number> = {
+  A: 0.0,
+  B: 0.2,
+  C: 0.4,
+  D: 0.6,
+  E: 0.8,
+  F: 1.0,
+}
 
 /**
  * Select the metric value based on heatmap mode.
  * Returns the raw value appropriate for the selected visualization dimension.
+ * For LOS mode, maps grade A→0 / F→1.
  */
 function selectMetricValue(metric: SegmentMetric, mode: HeatmapMode): number {
   switch (mode) {
@@ -14,6 +25,8 @@ function selectMetricValue(metric: SegmentMetric, mode: HeatmapMode): number {
       return metric.avgSpeed
     case 'CONGESTION':
       return metric.delay
+    case 'LOS':
+      return LOS_NUMERIC[metric.los] ?? 0.5
     default:
       return metric.density
   }
@@ -28,6 +41,7 @@ const MODE_RANGES: Record<HeatmapMode, { min: number; max: number }> = {
   VOLUME: { min: 0, max: 1800 },
   SPEED: { min: 0, max: 20 },
   CONGESTION: { min: 0, max: 40 },
+  LOS: { min: 0, max: 1 },
 }
 
 const HEATMAP_VERT = `
