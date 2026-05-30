@@ -71,6 +71,7 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
         twinId: backwardId,
         nextId: '',
         segmentId: seg.id,
+        laneIndex: 0,
       })
     }
     if (!halfEdges.value.has(backwardId)) {
@@ -80,6 +81,7 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
         twinId: forwardId,
         nextId: '',
         segmentId: seg.id,
+        laneIndex: 0,
       })
     }
   }
@@ -383,7 +385,7 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     segments.value = new Map(data.segments.map((s) => [s.id, s]))
     lanes.value = new Map(data.lanes.map((l) => [l.id, l]))
     laneArrows.value = new Map((data.laneArrows ?? []).map((a) => [laneArrowKey(a), a]))
-    halfEdges.value = new Map((data.halfEdges ?? []).map((e) => [e.id, e]))
+    halfEdges.value = new Map((data.halfEdges ?? []).map((e) => [e.id, { ...e, laneIndex: e.laneIndex ?? 0 }]))
     for (const segment of segments.value.values()) {
       if (!Array.from(lanes.value.values()).some((lane) => lane.segmentId === segment.id)) {
         for (const lane of createLanesForSegment(segment)) lanes.value.set(lane.id, lane)

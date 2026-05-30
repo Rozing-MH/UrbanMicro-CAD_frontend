@@ -106,7 +106,7 @@ const DEFAULT_PROFILE: CrossSectionProfile = {
     { id: 'l2', width: 3.5, type: 'CAR', direction: 'BACKWARD' },
   ],
   median: { width: 0, type: 'NONE' },
-  sidewalk: { leftWidth: 1.5, rightWidth: 1.5 },
+  sidewalk: { leftWidth: 1.5, rightWidth: 1.5, hasCurb: true },
   totalWidth: 8,
 }
 
@@ -122,7 +122,7 @@ const KNOWN_PROFILES: Record<string, CrossSectionProfile> = {
       { id: 'l4', width: 3.5, type: 'BUS', direction: 'BACKWARD' },
     ],
     median: { width: 1.5, type: 'GRASS' },
-    sidewalk: { leftWidth: 2, rightWidth: 2 },
+    sidewalk: { leftWidth: 2, rightWidth: 2, hasCurb: true },
     totalWidth: 19.5,
   },
 }
@@ -432,14 +432,14 @@ function buildFallbackRoadMesh(centerLine: Point2D[], halfWidth: number, elevati
   const len = Math.hypot(dx, dy) || 1
   const nx = -dy / len
   const ny = dx / len
-  const vertices = new Float32Array([
+  const positions = new Float32Array([
     start.x + nx * halfWidth, elevation, start.y + ny * halfWidth,
     start.x - nx * halfWidth, elevation, start.y - ny * halfWidth,
     end.x + nx * halfWidth, elevation, end.y + ny * halfWidth,
     end.x - nx * halfWidth, elevation, end.y - ny * halfWidth,
   ])
   return {
-    vertices,
+    positions,
     indices: new Uint32Array([0, 1, 2, 2, 1, 3]),
     uvs: new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]),
     normals: new Float32Array([

@@ -30,14 +30,14 @@ export function buildFallbackRoadMesh(
     const len = Math.hypot(dx, dy) || 1
     const nx = -dy / len
     const ny = dx / len
-    const vertices = new Float32Array([
+    const positions = new Float32Array([
       start.x + nx * halfWidth, elevation, start.y + ny * halfWidth,
       start.x - nx * halfWidth, elevation, start.y - ny * halfWidth,
       end.x + nx * halfWidth, elevation, end.y + ny * halfWidth,
       end.x - nx * halfWidth, elevation, end.y - ny * halfWidth,
     ])
     return {
-      vertices,
+      positions,
       indices: new Uint32Array([0, 1, 2, 2, 1, 3]),
       uvs: new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]),
       normals: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]),
@@ -46,7 +46,7 @@ export function buildFallbackRoadMesh(
 
   const halfWidth = profile.totalWidth / 2
   const vertCount = centerLine.length * 2
-  const vertices = new Float32Array(vertCount * 3)
+  const positions = new Float32Array(vertCount * 3)
   const uvs = new Float32Array(vertCount * 2)
   const normals = new Float32Array(vertCount * 3)
   const indices: number[] = []
@@ -70,12 +70,12 @@ export function buildFallbackRoadMesh(
 
     const leftIdx = i * 2
     const rightIdx = i * 2 + 1
-    vertices[leftIdx * 3] = centerLine[i].x + perpX * halfWidth
-    vertices[leftIdx * 3 + 1] = elevation
-    vertices[leftIdx * 3 + 2] = centerLine[i].y + perpY * halfWidth
-    vertices[rightIdx * 3] = centerLine[i].x - perpX * halfWidth
-    vertices[rightIdx * 3 + 1] = elevation
-    vertices[rightIdx * 3 + 2] = centerLine[i].y - perpY * halfWidth
+    positions[leftIdx * 3] = centerLine[i].x + perpX * halfWidth
+    positions[leftIdx * 3 + 1] = elevation
+    positions[leftIdx * 3 + 2] = centerLine[i].y + perpY * halfWidth
+    positions[rightIdx * 3] = centerLine[i].x - perpX * halfWidth
+    positions[rightIdx * 3 + 1] = elevation
+    positions[rightIdx * 3 + 2] = centerLine[i].y - perpY * halfWidth
 
     const v = totalLen > 0 ? calculatePolylineLength(centerLine.slice(0, i + 1)) / totalLen : 0
     uvs[leftIdx * 2] = v
@@ -100,7 +100,7 @@ export function buildFallbackRoadMesh(
   }
 
   return {
-    vertices,
+    positions,
     indices: new Uint32Array(indices),
     uvs,
     normals,

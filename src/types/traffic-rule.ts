@@ -40,7 +40,7 @@ export interface TrafficLightController {
 // Lane Restrictions
 // ============================================================
 
-export type MarkingType =
+export type LaneMarkingType =
   | 'SOLID_WHITE'
   | 'DASHED_WHITE'
   | 'SOLID_YELLOW'
@@ -49,13 +49,16 @@ export type MarkingType =
   | 'SOLID_DOUBLE_YELLOW'
   | 'NONE'
 
+/** @deprecated Use LaneMarkingType */
+export type MarkingType = LaneMarkingType
+
 export interface LaneRestriction {
   laneId: string
   speedLimit: number          // km/h
   allowedVehicleTypes: string[]
   allowLeftChange: boolean
   allowRightChange: boolean
-  markingType: MarkingType
+  markingType: LaneMarkingType
   isBusOnly: boolean
 }
 

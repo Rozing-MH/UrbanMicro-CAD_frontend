@@ -152,7 +152,7 @@ const defaultProfiles: CrossSectionProfile[] = [
       { id: 'l2', width: 3.5, type: 'CAR', direction: 'BACKWARD' },
     ],
     median: { width: 0, type: 'NONE' },
-    sidewalk: { leftWidth: 1.5, rightWidth: 1.5 },
+    sidewalk: { leftWidth: 1.5, rightWidth: 1.5, hasCurb: true },
     totalWidth: 8,
   },
   {
@@ -165,7 +165,7 @@ const defaultProfiles: CrossSectionProfile[] = [
       { id: 'l4', width: 3.5, type: 'BUS', direction: 'BACKWARD' },
     ],
     median: { width: 1.5, type: 'GRASS' },
-    sidewalk: { leftWidth: 2, rightWidth: 2 },
+    sidewalk: { leftWidth: 2, rightWidth: 2, hasCurb: true },
     totalWidth: 19.5,
   },
 ]

@@ -4,7 +4,7 @@ import type { Point2D, MeshData } from '@/types/road-network'
 export function triangulatePolygon(polygon: Point2D[], elevation = 0): MeshData {
   if (polygon.length < 3) {
     return {
-      vertices: new Float32Array(0),
+      positions: new Float32Array(0),
       indices: new Uint32Array(0),
       uvs: new Float32Array(0),
       normals: new Float32Array(0),
@@ -20,7 +20,7 @@ export function triangulatePolygon(polygon: Point2D[], elevation = 0): MeshData 
   const delaunay = new Delaunay(flat)
   const triangles = delaunay.triangles
 
-  const vertices = new Float32Array(polygon.length * 3)
+  const positions = new Float32Array(polygon.length * 3)
   const normals = new Float32Array(polygon.length * 3)
   const uvs = new Float32Array(polygon.length * 2)
 
@@ -35,9 +35,9 @@ export function triangulatePolygon(polygon: Point2D[], elevation = 0): MeshData 
   const sizeY = maxY - minY || 1
 
   for (let i = 0; i < polygon.length; i++) {
-    vertices[i * 3] = polygon[i].x
-    vertices[i * 3 + 1] = elevation
-    vertices[i * 3 + 2] = polygon[i].y
+    positions[i * 3] = polygon[i].x
+    positions[i * 3 + 1] = elevation
+    positions[i * 3 + 2] = polygon[i].y
     normals[i * 3] = 0
     normals[i * 3 + 1] = 1
     normals[i * 3 + 2] = 0
@@ -53,14 +53,14 @@ export function triangulatePolygon(polygon: Point2D[], elevation = 0): MeshData 
     indices[i + 2] = triangles[i + 1]
   }
 
-  return { vertices, indices, uvs, normals }
+  return { positions, indices, uvs, normals }
 }
 
 export function triangulateRibbon(leftEdge: Point2D[], rightEdge: Point2D[], elevation = 0): MeshData {
   const count = Math.min(leftEdge.length, rightEdge.length)
   if (count < 2) {
     return {
-      vertices: new Float32Array(0),
+      positions: new Float32Array(0),
       indices: new Uint32Array(0),
       uvs: new Float32Array(0),
       normals: new Float32Array(0),
@@ -68,7 +68,7 @@ export function triangulateRibbon(leftEdge: Point2D[], rightEdge: Point2D[], ele
   }
 
   const vertexCount = count * 2
-  const vertices = new Float32Array(vertexCount * 3)
+  const positions = new Float32Array(vertexCount * 3)
   const normals = new Float32Array(vertexCount * 3)
   const uvs = new Float32Array(vertexCount * 2)
   const indices = new Uint32Array((count - 1) * 6)
@@ -79,12 +79,12 @@ export function triangulateRibbon(leftEdge: Point2D[], rightEdge: Point2D[], ele
     const li = i * 2
     const ri = i * 2 + 1
 
-    vertices[li * 3] = l.x
-    vertices[li * 3 + 1] = elevation
-    vertices[li * 3 + 2] = l.y
-    vertices[ri * 3] = r.x
-    vertices[ri * 3 + 1] = elevation
-    vertices[ri * 3 + 2] = r.y
+    positions[li * 3] = l.x
+    positions[li * 3 + 1] = elevation
+    positions[li * 3 + 2] = l.y
+    positions[ri * 3] = r.x
+    positions[ri * 3 + 1] = elevation
+    positions[ri * 3 + 2] = r.y
 
     normals[li * 3 + 1] = 1
     normals[ri * 3 + 1] = 1
@@ -110,5 +110,5 @@ export function triangulateRibbon(leftEdge: Point2D[], rightEdge: Point2D[], ele
     indices[idx + 5] = d
   }
 
-  return { vertices, indices, uvs, normals }
+  return { positions, indices, uvs, normals }
 }

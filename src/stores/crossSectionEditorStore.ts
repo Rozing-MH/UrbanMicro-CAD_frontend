@@ -52,7 +52,7 @@ export const useCrossSectionEditorStore = defineStore('crossSectionEditor', () =
           { id: 'cl1', width: 3.5, type: 'CAR' as LaneType, direction: 'BACKWARD' as LaneDirection },
         ],
         median: { width: 0, type: 'NONE' },
-        sidewalk: { leftWidth: 1.5, rightWidth: 1.5 },
+        sidewalk: { leftWidth: 1.5, rightWidth: 1.5, hasCurb: true },
         totalWidth: 8,
       }
       profileName.value = ''

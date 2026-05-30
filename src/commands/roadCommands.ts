@@ -25,7 +25,7 @@ interface RuleSnapshot {
 function cloneMeshData(meshData: MeshData | undefined): MeshData | undefined {
   if (!meshData) return undefined
   return {
-    vertices: meshData.vertices.slice(),
+    positions: meshData.positions.slice(),
     indices: meshData.indices.slice(),
     uvs: meshData.uvs.slice(),
     normals: meshData.normals.slice(),

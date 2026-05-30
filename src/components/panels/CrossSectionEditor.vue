@@ -125,7 +125,7 @@ const selectedIndex = ref(0)
 
 const workingLanes = computed(() => editorStore.profile?.lanes ?? [])
 const workingMedian = computed(() => editorStore.profile?.median ?? { width: 0, type: 'NONE' as const })
-const workingSidewalk = computed(() => editorStore.profile?.sidewalk ?? { leftWidth: 1.5, rightWidth: 1.5 })
+const workingSidewalk = computed(() => editorStore.profile?.sidewalk ?? { leftWidth: 1.5, rightWidth: 1.5, hasCurb: true })
 
 const totalWidth = computed(() => editorStore.profile?.totalWidth ?? 0)
 

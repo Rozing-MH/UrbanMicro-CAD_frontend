@@ -56,7 +56,7 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
 
   function meshDataToGeometry(data: MeshData): THREE.BufferGeometry {
     const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.BufferAttribute(data.vertices, 3))
+    geo.setAttribute('position', new THREE.BufferAttribute(data.positions, 3))
     geo.setAttribute('normal', new THREE.BufferAttribute(data.normals, 3))
     geo.setAttribute('uv', new THREE.BufferAttribute(data.uvs, 2))
     geo.setIndex(new THREE.BufferAttribute(data.indices, 1))
@@ -221,7 +221,7 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
     const node = nodeMarkers.get(nodeId)
     const elevation = node ? node.position.y : 0
     const meshData = triangulatePolygon(polygon, elevation + 0.01)
-    if (meshData.vertices.length === 0) return
+    if (meshData.positions.length === 0) return
     const geo = meshDataToGeometry(meshData)
     const mesh = new THREE.Mesh(geo, intersectionMaterial)
     mesh.receiveShadow = true

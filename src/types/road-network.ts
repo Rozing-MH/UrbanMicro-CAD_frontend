@@ -14,7 +14,8 @@ export interface Point3D {
 }
 
 export interface Polygon2D {
-  vertices: Point2D[]
+  exterior: Point2D[]
+  holes: Point2D[][]
 }
 
 export interface BoundingBox2D {
@@ -29,7 +30,7 @@ export interface BoundingBox2D {
 // ============================================================
 
 export interface MeshData {
-  vertices: Float32Array
+  positions: Float32Array
   indices: Uint32Array
   uvs: Float32Array
   normals: Float32Array
@@ -63,6 +64,9 @@ export interface RampTransition {
   startNodeId: string
   endNodeId: string
   controlPoints: Point3D[]
+  rampLength: number
+  maxSlope: number
+  transitionCurve: 'LINEAR' | 'PARABOLIC' | 'CUBIC'
 }
 
 // ============================================================
@@ -72,29 +76,39 @@ export interface RampTransition {
 export type LaneType = 'CAR' | 'BUS' | 'BIKE' | 'TRAM'
 export type LaneDirection = 'FORWARD' | 'BACKWARD' | 'BOTH'
 
-export interface LaneDef {
+export interface LaneConfig {
   id: string
   width: number
   type: LaneType
   direction: LaneDirection
 }
 
-export interface MedianDef {
+/** @deprecated Use LaneConfig */
+export type LaneDef = LaneConfig
+
+export interface MedianConfig {
   width: number
-  type: 'GRASS' | 'BARRIER' | 'NONE'
+  type: 'PAINTED' | 'CONCRETE' | 'GRASS' | 'BARRIER' | 'NONE'
 }
 
-export interface SidewalkDef {
+/** @deprecated Use MedianConfig */
+export type MedianDef = MedianConfig
+
+export interface SidewalkConfig {
   leftWidth: number
   rightWidth: number
+  hasCurb: boolean
 }
+
+/** @deprecated Use SidewalkConfig */
+export type SidewalkDef = SidewalkConfig
 
 export interface CrossSectionProfile {
   id: string
   name: string
-  lanes: LaneDef[]
-  median: MedianDef
-  sidewalk: SidewalkDef
+  lanes: LaneConfig[]
+  median: MedianConfig
+  sidewalk: SidewalkConfig
   totalWidth: number
 }
 
@@ -134,6 +148,7 @@ export interface HalfEdge {
   twinId: string
   nextId: string
   segmentId: string
+  laneIndex: number
 }
 
 // ============================================================

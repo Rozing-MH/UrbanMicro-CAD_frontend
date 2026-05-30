@@ -16,7 +16,7 @@ export interface SplitResult {
   newSegments: RoadSegment[]
   removedSegmentIds: string[]
   // Half-edges that need to be created for new segments
-  halfEdgeDefs: Array<{ id: string; originNodeId: string; twinId: string; nextId: string; segmentId: string }>
+  halfEdgeDefs: Array<{ id: string; originNodeId: string; twinId: string; nextId: string; segmentId: string; laneIndex: number }>
   // Half-edge IDs that should be removed (for replaced segments)
   removedHalfEdgeIds: string[]
 }
@@ -69,8 +69,8 @@ export function healOnSegmentAdd(
     // New half-edges for the two sub-segments
     for (const seg of [split.seg1, split.seg2]) {
       result.halfEdgeDefs.push(
-        { id: `${seg.id}:he:forward`, originNodeId: seg.startNodeId, twinId: `${seg.id}:he:backward`, nextId: '', segmentId: seg.id },
-        { id: `${seg.id}:he:backward`, originNodeId: seg.endNodeId, twinId: `${seg.id}:he:forward`, nextId: '', segmentId: seg.id },
+        { id: `${seg.id}:he:forward`, originNodeId: seg.startNodeId, twinId: `${seg.id}:he:backward`, nextId: '', segmentId: seg.id, laneIndex: 0 },
+        { id: `${seg.id}:he:backward`, originNodeId: seg.endNodeId, twinId: `${seg.id}:he:forward`, nextId: '', segmentId: seg.id, laneIndex: 0 },
       )
     }
   }
@@ -145,8 +145,8 @@ export function splitIntersections(
             result.removedHalfEdgeIds.push(`${a.id}:he:forward`, `${a.id}:he:backward`)
             for (const seg of [splitA.seg1, splitA.seg2]) {
               result.halfEdgeDefs.push(
-                { id: `${seg.id}:he:forward`, originNodeId: seg.startNodeId, twinId: `${seg.id}:he:backward`, nextId: '', segmentId: seg.id },
-                { id: `${seg.id}:he:backward`, originNodeId: seg.endNodeId, twinId: `${seg.id}:he:forward`, nextId: '', segmentId: seg.id },
+                { id: `${seg.id}:he:forward`, originNodeId: seg.startNodeId, twinId: `${seg.id}:he:backward`, nextId: '', segmentId: seg.id, laneIndex: 0 },
+                { id: `${seg.id}:he:backward`, originNodeId: seg.endNodeId, twinId: `${seg.id}:he:forward`, nextId: '', segmentId: seg.id, laneIndex: 0 },
               )
             }
           }
@@ -162,8 +162,8 @@ export function splitIntersections(
             result.removedHalfEdgeIds.push(`${b.id}:he:forward`, `${b.id}:he:backward`)
             for (const seg of [splitB.seg1, splitB.seg2]) {
               result.halfEdgeDefs.push(
-                { id: `${seg.id}:he:forward`, originNodeId: seg.startNodeId, twinId: `${seg.id}:he:backward`, nextId: '', segmentId: seg.id },
-                { id: `${seg.id}:he:backward`, originNodeId: seg.endNodeId, twinId: `${seg.id}:he:forward`, nextId: '', segmentId: seg.id },
+                { id: `${seg.id}:he:forward`, originNodeId: seg.startNodeId, twinId: `${seg.id}:he:backward`, nextId: '', segmentId: seg.id, laneIndex: 0 },
+                { id: `${seg.id}:he:backward`, originNodeId: seg.endNodeId, twinId: `${seg.id}:he:forward`, nextId: '', segmentId: seg.id, laneIndex: 0 },
               )
             }
           }
