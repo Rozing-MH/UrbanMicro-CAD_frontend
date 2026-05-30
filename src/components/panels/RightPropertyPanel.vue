@@ -254,6 +254,20 @@
               <label>LOS 评级</label>
               <span class="los-grade-inline" :data-grade="evalSelectedIntersectionResult.grade">{{ evalSelectedIntersectionResult.grade }}</span>
             </div>
+            <template v-if="evalSelectedIntersectionResult.approachDelays.length > 0">
+              <h4 class="sub-title">进口道延误</h4>
+              <table class="lane-metric-table">
+                <thead>
+                  <tr><th>路段</th><th>延误 (s)</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="ad in evalSelectedIntersectionResult.approachDelays" :key="ad.fromSegmentId">
+                    <td>{{ ad.fromSegmentId.slice(-6) }}</td>
+                    <td>{{ ad.delay.toFixed(1) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </template>
           </template>
           <!-- Network summary -->
           <template v-if="evalStore.networkLOS">

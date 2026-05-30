@@ -55,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch, type Ref } from 'vue'
+import { ref, shallowRef, computed, onMounted, onBeforeUnmount, watch, type Ref } from 'vue'
 import * as THREE from 'three'
 import { useThreeRenderer } from '@/composables/useThreeRenderer'
 import { useRoadRenderer, type LampState } from '@/composables/useRoadRenderer'
@@ -153,7 +153,8 @@ const gizmoControls = useGizmoControls(
   commitGizmoDrag,
 )
 const heatmap = useHeatmap(sceneRef)
-const losBadges = useLOSBadges(sceneRef)
+/** LOS badges — initialized in onMounted after scene is created */
+const losBadges = shallowRef<ReturnType<typeof useLOSBadges> | null>(null)
 const groundGrid = useGroundGrid(sceneRef)
 
 function genId(): string {
@@ -2051,7 +2052,7 @@ watch(
   () => {
     if (evaluationStore.evalMode === 'NONE') {
       heatmap.clearHeatmap()
-      losBadges.clearLOSBadges()
+      losBadges.value?.clearLOSBadges()
       return
     }
     // Update segment heatmaps
@@ -2067,11 +2068,11 @@ watch(
       )
     }
     // Update intersection LOS badges
-    losBadges.clearLOSBadges()
+    losBadges.value?.clearLOSBadges()
     for (const [nodeId, result] of evaluationStore.results) {
       const node = roadStore.getNode(nodeId)
       if (!node) continue
-      losBadges.updateLOSBadge(
+      losBadges.value?.updateLOSBadge(
         nodeId,
         node.position.x,
         node.position.y,
@@ -2129,7 +2130,7 @@ watch(
     if (newState === 'IDLE') {
       evaluationStore.clear()
       heatmap.clearHeatmap()
-      losBadges.clearLOSBadges()
+      losBadges.value?.clearLOSBadges()
     }
   },
 )
@@ -2181,6 +2182,10 @@ onMounted(() => {
   vehicleRenderer.init()
   groundGrid.init()
   cameraControls.attach()
+  // Initialize LOS badges (CSS2DRenderer already in useThreeRenderer's render loop)
+  if (sceneRef.value) {
+    losBadges.value = useLOSBadges(sceneRef.value)
+  }
   containerRef.value?.addEventListener('pointermove', onPointerMove)
   containerRef.value?.addEventListener('pointerdown', onPointerDown)
   containerRef.value?.addEventListener('pointerup', onPointerUp)
@@ -2198,16 +2203,30 @@ onMounted(() => {
         void simStore.tick().finally(() => {
           simTickInFlight = false
           updateTrafficLightRender()
-          // Bridge lane metrics to evaluation store
+          // Bridge lane metrics: evaluationStore now subscribes
+          // to simulation:metrics-updated event automatically.
+          // Only refresh visual overlays here.
           if (simStore.laneMetrics.length > 0) {
-            evaluationStore.updateFromSimulation(simStore.laneMetrics)
-            // Refresh LOS badges when evaluation data updates
             if (evaluationStore.evalMode !== 'NONE') {
-              losBadges.clearLOSBadges()
+              // Heatmap: update segment overlays with fresh metrics
+              for (const segment of roadStore.segments.values()) {
+                const metric = evaluationStore.segmentMetrics.get(segment.id)
+                if (!metric) continue
+                const existingMesh = roadRenderer.segmentMeshes.get(segment.id)
+                heatmap.updateSegmentHeatmap(
+                  segment.id,
+                  existingMesh,
+                  metric,
+                  evaluationStore.heatmapConfig,
+                )
+              }
+              // LOS badges: incremental update — only update changed grades
               for (const [nodeId, result] of evaluationStore.results) {
                 const node = roadStore.getNode(nodeId)
                 if (!node) continue
-                losBadges.updateLOSBadge(
+                const existing = losBadges.value?.badgeObjects.get(nodeId)
+                if (existing && (existing.userData.losGrade as string) === result.grade) continue
+                losBadges.value?.updateLOSBadge(
                   nodeId,
                   node.position.x,
                   node.position.y,
@@ -2278,7 +2297,7 @@ onBeforeUnmount(() => {
   cameraControls.detach()
   gizmoControls.dispose()
   heatmap.dispose()
-  losBadges.dispose()
+  losBadges.value?.dispose()
   renderer.dispose()
 })
 </script>

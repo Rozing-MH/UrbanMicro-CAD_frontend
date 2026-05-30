@@ -5,6 +5,7 @@ import { DEFAULT_HEATMAP_STOPS, delayToLOS } from '@/types/evaluation'
 import type { LaneMetricSnapshot } from '@/types/simulation'
 import { computeEvaluation, type BridgeContext } from '@/services/evaluationBridge'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
+import { storeEventBus } from '@/stores/storeEventBus'
 
 export type EvalMode = 'NONE' | 'LOS' | 'SPEED' | 'DENSITY' | 'DELAY'
 
@@ -78,7 +79,9 @@ export const useEvaluationStore = defineStore('evaluation', () => {
 
   /**
    * Build nodeId → laneId[] mapping from roadNetworkStore.
-   * A lane belongs to a node's intersection if its segment is connected to that node.
+   * A lane belongs ONLY to the end node of its segment (the downstream
+   * intersection where vehicles actually enter the junction area).
+   * This avoids double-counting lane metrics across both endpoints.
    */
   function buildNodeToLanes(): Map<string, string[]> {
     const roadStore = useRoadNetworkStore()
@@ -86,15 +89,14 @@ export const useEvaluationStore = defineStore('evaluation', () => {
     for (const lane of roadStore.lanes.values()) {
       const seg = roadStore.getSegment(lane.segmentId)
       if (!seg) continue
-      // Add lane to both start and end nodes of its segment
-      for (const nodeId of [seg.startNodeId, seg.endNodeId]) {
-        let arr = mapping.get(nodeId)
-        if (!arr) {
-          arr = []
-          mapping.set(nodeId, arr)
-        }
-        arr.push(lane.id)
+      // Lane only contributes to the end node (downstream intersection)
+      const nodeId = seg.endNodeId
+      let arr = mapping.get(nodeId)
+      if (!arr) {
+        arr = []
+        mapping.set(nodeId, arr)
       }
+      arr.push(lane.id)
     }
     return mapping
   }
@@ -144,6 +146,16 @@ export const useEvaluationStore = defineStore('evaluation', () => {
     reportId.value = null
     isComputing.value = false
   }
+
+  /**
+   * Subscribe to simulation:metrics-updated event bus.
+   * Per design doc: EvaluationStore subscribes to SimulationStore events
+   * instead of being called directly from the view layer.
+   */
+  const onMetricsUpdated = (payload: { laneMetrics: LaneMetricSnapshot[] }): void => {
+    updateFromSimulation(payload.laneMetrics)
+  }
+  storeEventBus.on('simulation:metrics-updated', onMetricsUpdated)
 
   return {
     evalMode, results, segmentMetrics, laneMetricsMap, heatmapConfig, reportId, isComputing,

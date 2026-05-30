@@ -3,6 +3,8 @@
 // Per design doc: Store 间通过事件总线解耦，禁止 Store 之间直接引用。
 // ============================================================
 
+import type { LaneMetricSnapshot } from '@/types/simulation'
+
 export interface StoreEventMap {
   'road-network:segment-added': { segmentId: string }
   'road-network:segment-removed': { segmentId: string }
@@ -12,7 +14,7 @@ export interface StoreEventMap {
   'traffic-rule:validation-requested': {}
   'cross-section:profile-changed': { profileId: string; segmentId?: string }
   'simulation:state-changed': { running: boolean }
-  'simulation:metrics-updated': {}
+  'simulation:metrics-updated': { laneMetrics: LaneMetricSnapshot[] }
   'simulation:od-matrix-changed': {}
   'simulation:vehicle-mix-changed': {}
   'evaluation:report-generated': { reportId: string }

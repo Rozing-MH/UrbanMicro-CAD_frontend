@@ -124,14 +124,23 @@ export function aggregateLaneToSegment(
  * - throughput: 节点关联车道的 throughput 之和
  * - queueLength: 节点关联车道的 currentQueueLen 之和
  * - grade: delayToLOS(averageDelay)
+ * - approachDelays: 各进口道（按 segmentId 分组）的车辆数加权平均延误
  */
 export function aggregateLaneToIntersection(
   laneMetrics: LaneMetricSnapshot[],
   /** nodeId → laneId[] mapping */
   nodeToLanes: Map<string, string[]>,
   nodes: Map<string, RoadNode> | RoadNode[],
+  lanes: Map<string, Lane> | Lane[],
 ): Array<{ id: string; result: EvaluationResult }> {
   const nodesArray = Array.isArray(nodes) ? nodes : Array.from(nodes.values())
+  const lanesArray = Array.isArray(lanes) ? lanes : Array.from(lanes.values())
+
+  // Build laneId → segmentId lookup for approach grouping
+  const laneToSegment = new Map<string, string>()
+  for (const lane of lanesArray) {
+    laneToSegment.set(lane.id, lane.segmentId)
+  }
 
   // Only compute for actual intersection nodes (≥2 connected segments)
   const intersectionNodeIds = new Set<string>()
@@ -159,6 +168,9 @@ export function aggregateLaneToIntersection(
     let throughput = 0
     let queueLength = 0
 
+    // Per-approach (segment) delay accumulation
+    const approachAccum = new Map<string, { vehicleCount: number; weightedDelay: number }>()
+
     for (const lid of laneIds) {
       const lm = laneMetricMap.get(lid)
       if (!lm) continue
@@ -167,6 +179,18 @@ export function aggregateLaneToIntersection(
       weightedDelay += lm.avgDelay * lm.vehicleCount
       throughput += lm.throughput
       queueLength += lm.currentQueueLen
+
+      // Accumulate per-approach delay
+      const segId = laneToSegment.get(lid)
+      if (segId) {
+        let acc = approachAccum.get(segId)
+        if (!acc) {
+          acc = { vehicleCount: 0, weightedDelay: 0 }
+          approachAccum.set(segId, acc)
+        }
+        acc.vehicleCount += lm.vehicleCount
+        acc.weightedDelay += lm.avgDelay * lm.vehicleCount
+      }
     }
 
     // Skip nodes with no vehicle data
@@ -174,6 +198,15 @@ export function aggregateLaneToIntersection(
 
     const averageDelay = weightedDelay / Math.max(totalVehicleCount, 1)
     const grade = delayToLOS(averageDelay)
+
+    // Build approachDelays array
+    const approachDelays: { fromSegmentId: string; delay: number }[] = []
+    for (const [segId, acc] of approachAccum) {
+      approachDelays.push({
+        fromSegmentId: segId,
+        delay: acc.vehicleCount > 0 ? acc.weightedDelay / acc.vehicleCount : 0,
+      })
+    }
 
     results.push({
       id: nodeId,
@@ -183,6 +216,7 @@ export function aggregateLaneToIntersection(
         grade,
         throughput,
         queueLength,
+        approachDelays,
         updatedAt: now,
       },
     })
@@ -217,7 +251,7 @@ export function computeEvaluation(
   }
 
   const segmentMetrics = aggregateLaneToSegment(laneMetrics, ctx.lanes, ctx.segments)
-  const intersectionResults = aggregateLaneToIntersection(laneMetrics, ctx.nodeToLanes, ctx.nodes)
+  const intersectionResults = aggregateLaneToIntersection(laneMetrics, ctx.nodeToLanes, ctx.nodes, ctx.lanes)
 
   return { segmentMetrics, intersectionResults }
 }

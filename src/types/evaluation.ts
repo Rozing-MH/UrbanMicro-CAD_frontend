@@ -1,14 +1,3 @@
-export interface LaneMetrics {
-  laneId: string
-  volume: number
-  averageSpeed: number
-  density: number
-  maxQueueLength: number
-  congestionRatio: number
-  sampleCount: number
-  updatedAt: number
-}
-
 export type LOSGrade = 'A' | 'B' | 'C' | 'D' | 'E' | 'F'
 
 export interface IntersectionLOS {
@@ -59,6 +48,7 @@ export interface EvaluationResult {
   grade: LOSGrade
   throughput: number
   queueLength: number
+  approachDelays: { fromSegmentId: string; delay: number }[]
   updatedAt: number
 }
 

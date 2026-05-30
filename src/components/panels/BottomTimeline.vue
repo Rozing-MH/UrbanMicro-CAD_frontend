@@ -146,7 +146,7 @@ function onSeek(ev: MouseEvent): void {
 function setEvalDensity(): void {
   editor.setViewMode('TRAFFIC_VOLUME')
   evalStore.setEvalMode('DENSITY')
-  evalStore.setHeatmapConfig({ mode: 'CONGESTION' })
+  evalStore.setHeatmapConfig({ mode: 'VOLUME' })
 }
 
 function setEvalSpeed(): void {

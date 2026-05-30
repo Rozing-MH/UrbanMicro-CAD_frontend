@@ -21,6 +21,7 @@ import {
   VEHICLE_BUFFER_STRIDE,
   MAX_VEHICLES,
 } from '@/types/simulation'
+import { storeEventBus } from '@/stores/storeEventBus'
 
 export type SimState = 'IDLE' | 'RUNNING' | 'PAUSED' | 'FINISHED'
 
@@ -118,6 +119,7 @@ export const useSimulationStore = defineStore('simulation', () => {
     stats.value = frame.stats
     if (frame.laneMetrics.length > 0) {
       laneMetrics.value = frame.laneMetrics
+      storeEventBus.emit('simulation:metrics-updated', { laneMetrics: frame.laneMetrics })
     }
     return frame
   }
