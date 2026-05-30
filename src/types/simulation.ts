@@ -111,10 +111,23 @@ export interface SimulationStats {
   throughput: number
 }
 
+/** Per-lane metric snapshot, computed every statsInterval (5 sim-seconds) in worker */
+export interface LaneMetricSnapshot {
+  laneId: string
+  vehicleCount: number
+  avgSpeed: number       // m/s
+  maxQueueLen: number
+  currentQueueLen: number
+  throughput: number     // veh/hr
+  avgDelay: number       // seconds
+  congestionRatio: number // 0-1+
+}
+
 export interface SimulationFrame {
   time: number
   vehicleCount: number
   stats: SimulationStats
+  laneMetrics: LaneMetricSnapshot[]  // populated every statsInterval, empty otherwise
 }
 
 export type SimulationStatus = 'STOPPED' | 'RUNNING' | 'PAUSED'

@@ -2,6 +2,9 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { LOSGrade, EvaluationResult, HeatmapConfig, SegmentMetric } from '@/types/evaluation'
 import { DEFAULT_HEATMAP_STOPS, delayToLOS } from '@/types/evaluation'
+import type { LaneMetricSnapshot } from '@/types/simulation'
+import { computeEvaluation, type BridgeContext } from '@/services/evaluationBridge'
+import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 
 export type EvalMode = 'NONE' | 'LOS' | 'SPEED' | 'DENSITY' | 'DELAY'
 
@@ -71,6 +74,59 @@ export const useEvaluationStore = defineStore('evaluation', () => {
     isComputing.value = c
   }
 
+  /**
+   * Build nodeId → laneId[] mapping from roadNetworkStore.
+   * A lane belongs to a node's intersection if its segment is connected to that node.
+   */
+  function buildNodeToLanes(): Map<string, string[]> {
+    const roadStore = useRoadNetworkStore()
+    const mapping = new Map<string, string[]>()
+    for (const lane of roadStore.lanes.values()) {
+      const seg = roadStore.getSegment(lane.segmentId)
+      if (!seg) continue
+      // Add lane to both start and end nodes of its segment
+      for (const nodeId of [seg.startNodeId, seg.endNodeId]) {
+        let arr = mapping.get(nodeId)
+        if (!arr) {
+          arr = []
+          mapping.set(nodeId, arr)
+        }
+        arr.push(lane.id)
+      }
+    }
+    return mapping
+  }
+
+  /**
+   * Main bridge action: receive lane metrics from simulation,
+   * aggregate to segment/intersection level, and update store.
+   */
+  function updateFromSimulation(laneMetrics: LaneMetricSnapshot[]): void {
+    if (laneMetrics.length === 0) return
+
+    const roadStore = useRoadNetworkStore()
+    const bridgeCtx: BridgeContext = {
+      lanes: roadStore.lanes,
+      segments: roadStore.segments,
+      nodes: roadStore.nodes,
+      nodeToLanes: buildNodeToLanes(),
+    }
+
+    const result = computeEvaluation(laneMetrics, bridgeCtx)
+
+    // Update segment metrics
+    bulkSetMetrics(result.segmentMetrics)
+
+    // Update intersection results
+    for (const { id, result: evalResult } of result.intersectionResults) {
+      results.value.set(id, evalResult)
+    }
+
+    // Trigger reactive update for computed properties
+    results.value = new Map(results.value)
+    segmentMetrics.value = new Map(segmentMetrics.value)
+  }
+
   function clear(): void {
     results.value.clear()
     segmentMetrics.value.clear()
@@ -84,5 +140,6 @@ export const useEvaluationStore = defineStore('evaluation', () => {
     networkLOS, worstIntersectionId,
     setEvalMode, setResult, setSegmentMetric, bulkSetMetrics,
     setHeatmapConfig, setReportId, setComputing, clear,
+    updateFromSimulation,
   }
 })

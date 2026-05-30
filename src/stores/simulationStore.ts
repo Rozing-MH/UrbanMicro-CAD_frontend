@@ -11,6 +11,7 @@ import type {
   MOBILParams,
   SimulationStats,
   SimulationFrame,
+  LaneMetricSnapshot,
 } from '@/types/simulation'
 import type { SimulationWorkerApi } from '@/workers/simulation.worker'
 import {
@@ -47,6 +48,13 @@ export const useSimulationStore = defineStore('simulation', () => {
     maxQueueLength: 0,
     throughput: 0,
   })
+
+  const laneMetrics = ref<LaneMetricSnapshot[]>([])
+
+  /** Latest non-empty lane metrics (avoids UI flicker on empty-tick frames) */
+  const lastLaneMetrics = computed(() =>
+    laneMetrics.value.length > 0 ? laneMetrics.value : [],
+  )
 
   let sharedBuffer: SharedArrayBuffer | null = null
   let vehicleView: Float32Array | null = null
@@ -108,6 +116,9 @@ export const useSimulationStore = defineStore('simulation', () => {
     currentTime.value = frame.time
     vehicleCount.value = frame.vehicleCount
     stats.value = frame.stats
+    if (frame.laneMetrics.length > 0) {
+      laneMetrics.value = frame.laneMetrics
+    }
     return frame
   }
 
@@ -171,6 +182,7 @@ export const useSimulationStore = defineStore('simulation', () => {
     currentTime.value = 0
     vehicleCount.value = 0
     vehicles.value.clear()
+    laneMetrics.value = []
     stats.value = {
       totalVehicles: 0,
       completedVehicles: 0,
@@ -184,7 +196,7 @@ export const useSimulationStore = defineStore('simulation', () => {
 
   return {
     state, currentTime, simulatedDuration, timeScale, vehicleCount, vehicles,
-    odMatrix, idmParams, mobilParams, vehicleMix, stats,
+    odMatrix, idmParams, mobilParams, vehicleMix, stats, laneMetrics, lastLaneMetrics,
     isRunning, progress,
     initSharedBuffer, getSharedBuffer, getVehicleView,
     start, pause, tick, stop,

@@ -23,9 +23,11 @@
       </div>
 
       <div class="view-switch">
-        <button class="view-btn" :class="{ active: editor.viewMode === 'TRAFFIC_VOLUME' }" @click="setTrafficVolume">流量</button>
-        <button class="view-btn" :class="{ active: editor.viewMode === 'TRAFFIC_ROUTES' }" @click="setTrafficRoutes">路线</button>
-        <button class="view-btn" :class="{ active: editor.viewMode === 'EDIT' }" @click="setHiddenView">隐藏</button>
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'DENSITY' }" @click="setEvalDensity">流量</button>
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'SPEED' }" @click="setEvalSpeed">速度</button>
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'DELAY' }" @click="setEvalDelay">延误</button>
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'LOS' }" @click="setEvalLOS">LOS</button>
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'NONE' }" @click="setHiddenView">隐藏</button>
       </div>
 
       <div class="time-display">
@@ -141,18 +143,33 @@ function onSeek(ev: MouseEvent): void {
   sim.setCurrentTime(ratio * sim.simulatedDuration)
 }
 
-function setTrafficVolume(): void {
+function setEvalDensity(): void {
   editor.setViewMode('TRAFFIC_VOLUME')
   evalStore.setEvalMode('DENSITY')
+  evalStore.setHeatmapConfig({ mode: 'CONGESTION' })
 }
 
-function setTrafficRoutes(): void {
-  editor.setViewMode('TRAFFIC_ROUTES')
+function setEvalSpeed(): void {
+  editor.setViewMode('TRAFFIC_VOLUME')
+  evalStore.setEvalMode('SPEED')
+  evalStore.setHeatmapConfig({ mode: 'SPEED' })
+}
+
+function setEvalDelay(): void {
+  editor.setViewMode('TRAFFIC_VOLUME')
+  evalStore.setEvalMode('DELAY')
+  evalStore.setHeatmapConfig({ mode: 'CONGESTION' })
+}
+
+function setEvalLOS(): void {
+  editor.setViewMode('TRAFFIC_VOLUME')
+  evalStore.setEvalMode('LOS')
 }
 
 function setHiddenView(): void {
   editor.setViewMode('EDIT')
   evalStore.setEvalMode('NONE')
+  evalStore.setHeatmapConfig({ mode: 'OFF' })
 }
 </script>
 

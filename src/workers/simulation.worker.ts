@@ -8,6 +8,7 @@ import type {
   VehicleType,
   VehicleSpec,
   RouteWaypoint,
+  LaneMetricSnapshot,
 } from '@/types/simulation'
 import type { Lane, RoadSegment, RoadNode, TopologyData } from '@/types/road-network'
 import type { RuleData, TrafficLightController, LaneRestriction, LaneConnector } from '@/types/traffic-rule'
@@ -1307,7 +1308,7 @@ const simApi = {
     if (ctx.vehicleBuffer) ctx.vehicleBuffer.fill(0)
   },
 
-  tick(dt: number): { time: number; vehicleCount: number; stats: SimulationStats } {
+  tick(dt: number): { time: number; vehicleCount: number; stats: SimulationStats; laneMetrics: LaneMetricSnapshot[] } {
     if (!ctx.running) {
       return {
         time: ctx.time,
@@ -1320,6 +1321,7 @@ const simApi = {
           maxQueueLength: 0,
           throughput: ctx.completedVehicles,
         },
+        laneMetrics: [],
       }
     }
 
@@ -1338,10 +1340,12 @@ const simApi = {
     flushToBuffer()
 
     // 5. Update lane-level rolling stats periodically
+    let laneMetricsUpdated = false
     ctx.statsAccumulator += dt
     if (ctx.statsAccumulator >= ctx.statsInterval) {
       ctx.statsAccumulator = 0
       updateLaneStats()
+      laneMetricsUpdated = true
     }
 
     // 6. Aggregate global stats from lane stats
@@ -1366,6 +1370,29 @@ const simApi = {
     const avgSpeed = count > 0 ? totalSpeed / count : 0
     const avgDelay = count > 0 ? totalDelay / count : 0
 
+    // 7. Convert laneStats to LaneMetricSnapshot[] (only on stats update cycle)
+    const laneMetrics: LaneMetricSnapshot[] = []
+    if (laneMetricsUpdated) {
+      for (const [laneId, st] of ctx.laneStats) {
+        const laneGeo = ctx.laneGeoMap.get(laneId)
+        const laneLength = laneGeo?.length ?? 1000 // fallback 1km
+        const vc = Math.max(st.vehicleCount, 1)
+        const densityPerKm = (st.vehicleCount / laneLength) * 1000
+        const capacityPerHour = (laneLength / (laneLength > 0 ? 2.0 : 1)) * 3600 / (laneLength > 0 ? 2.0 : 1) // rough: 1800 veh/hr/lane
+        const congestionRatio = capacityPerHour > 0 ? ((st.vehicleCount / laneLength) * 1000) / (capacityPerHour / 1000) : 0
+        laneMetrics.push({
+          laneId,
+          vehicleCount: st.vehicleCount,
+          avgSpeed: st.totalSpeed / vc,
+          maxQueueLen: st.maxQueueLen,
+          currentQueueLen: st.currentQueueLen,
+          throughput: st.throughput,
+          avgDelay: st.totalDelay / vc,
+          congestionRatio: Math.min(congestionRatio, 2.0),
+        })
+      }
+    }
+
     return {
       time: ctx.time,
       vehicleCount: count,
@@ -1377,6 +1404,7 @@ const simApi = {
         maxQueueLength: maxQueue,
         throughput: ctx.completedVehicles,
       },
+      laneMetrics,
     }
   },
 

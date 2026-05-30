@@ -2098,6 +2098,16 @@ watch(
   },
 )
 
+/** Clear evaluation data when simulation resets */
+watch(
+  () => simStore.state,
+  (newState) => {
+    if (newState === 'IDLE') {
+      evaluationStore.clear()
+    }
+  },
+)
+
 /** Sync traffic light 3D models with store data */
 function updateTrafficLightRender(): void {
   // Remove lights for nodes that no longer have TRAFFIC_LIGHT controlMode
@@ -2162,6 +2172,10 @@ onMounted(() => {
         void simStore.tick().finally(() => {
           simTickInFlight = false
           updateTrafficLightRender()
+          // Bridge lane metrics to evaluation store
+          if (simStore.laneMetrics.length > 0) {
+            evaluationStore.updateFromSimulation(simStore.laneMetrics)
+          }
         })
       }
       const buf = simStore.getVehicleView()

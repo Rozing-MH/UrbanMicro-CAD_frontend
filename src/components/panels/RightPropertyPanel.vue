@@ -208,6 +208,47 @@
           </li>
         </ul>
       </section>
+
+      <section v-if="editor.panelState.propertiesTab === 'evaluation'" class="prop-group">
+        <h3 class="prop-title">评估指标</h3>
+        <template v-if="evalStore.segmentMetrics.size === 0 && evalStore.results.size === 0">
+          <div class="val-ok">请先运行仿真以生成评估数据</div>
+        </template>
+        <template v-else>
+          <!-- Selected segment metrics -->
+          <template v-if="evalSelectedSegmentMetric">
+            <h4 class="sub-title">选中路段指标</h4>
+            <div class="prop-row"><label>平均速度</label><span>{{ evalSelectedSegmentMetric.avgSpeed.toFixed(1) }} m/s</span></div>
+            <div class="prop-row"><label>密度</label><span>{{ evalSelectedSegmentMetric.density.toFixed(1) }} veh/km</span></div>
+            <div class="prop-row"><label>流量</label><span>{{ evalSelectedSegmentMetric.volume.toFixed(0) }} veh/hr</span></div>
+            <div class="prop-row"><label>延误</label><span>{{ evalSelectedSegmentMetric.delay.toFixed(1) }} s</span></div>
+            <div class="prop-row">
+              <label>LOS</label>
+              <span class="los-grade-inline" :data-grade="evalSelectedSegmentMetric.los">{{ evalSelectedSegmentMetric.los }}</span>
+            </div>
+          </template>
+          <!-- Selected intersection LOS -->
+          <template v-if="evalSelectedIntersectionResult">
+            <h4 class="sub-title">交叉口服务水平</h4>
+            <div class="prop-row"><label>平均延误</label><span>{{ evalSelectedIntersectionResult.averageDelay.toFixed(1) }} s</span></div>
+            <div class="prop-row"><label>吞吐量</label><span>{{ evalSelectedIntersectionResult.throughput.toFixed(0) }} veh/hr</span></div>
+            <div class="prop-row"><label>排队长度</label><span>{{ evalSelectedIntersectionResult.queueLength }}</span></div>
+            <div class="prop-row">
+              <label>LOS 评级</label>
+              <span class="los-grade-inline" :data-grade="evalSelectedIntersectionResult.grade">{{ evalSelectedIntersectionResult.grade }}</span>
+            </div>
+          </template>
+          <!-- Network summary -->
+          <template v-if="evalStore.networkLOS">
+            <h4 class="sub-title">路网总览</h4>
+            <div class="prop-row">
+              <label>路网 LOS</label>
+              <span class="los-grade-inline" :data-grade="evalStore.networkLOS">{{ evalStore.networkLOS }}</span>
+            </div>
+          </template>
+          <div v-if="!evalSelectedSegmentMetric && !evalSelectedIntersectionResult" class="val-ok">选择路段或交叉口查看指标</div>
+        </template>
+      </section>
     </div>
   </aside>
 </template>
@@ -217,6 +258,7 @@ import { computed } from 'vue'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
+import { useEvaluationStore } from '@/stores/evaluationStore'
 import { historyStack, type HistorySessionId } from '@/commands/HistoryStack'
 import {
   DeleteSegmentCommand,
@@ -246,7 +288,7 @@ interface TabDef { id: string; label: string }
 const tabs: TabDef[] = [
   { id: 'geometry', label: '几何' },
   { id: 'rules', label: '规则' },
-  { id: 'simulation', label: '仿真' },
+  { id: 'evaluation', label: '评估' },
   { id: 'validation', label: '验证' },
 ]
 
@@ -265,6 +307,18 @@ const selectedNode = computed(() => {
 const selectedLight = computed(() => {
   if (!rules.selectedLightId) return null
   return rules.trafficLights.get(rules.selectedLightId) ?? null
+})
+
+const evalStore = useEvaluationStore()
+
+const evalSelectedSegmentMetric = computed(() => {
+  if (!selectedSegment.value) return null
+  return evalStore.segmentMetrics.get(selectedSegment.value.id) ?? null
+})
+
+const evalSelectedIntersectionResult = computed(() => {
+  if (!selectedNode.value) return null
+  return evalStore.results.get(selectedNode.value.id) ?? null
 })
 
 const selectedSegmentLanes = computed<Lane[]>(() => {
@@ -667,4 +721,15 @@ function onRunValidation(): void {
 .val-item.warning .val-severity { color: #e3a857; }
 .val-severity { flex-shrink: 0; width: 14px; text-align: center; font-size: 12px; }
 .val-msg { color: #d8dde6; line-height: 1.4; }
+.los-grade-inline {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-weight: 700; font-size: 14px;
+  padding: 1px 6px; border-radius: 3px; display: inline-block;
+}
+.los-grade-inline[data-grade='A'] { background: #2ecc71; color: #fff; }
+.los-grade-inline[data-grade='B'] { background: #58c177; color: #fff; }
+.los-grade-inline[data-grade='C'] { background: #f1c40f; color: #1f232b; }
+.los-grade-inline[data-grade='D'] { background: #e67e22; color: #fff; }
+.los-grade-inline[data-grade='E'] { background: #e74c3c; color: #fff; }
+.los-grade-inline[data-grade='F'] { background: #c0392b; color: #fff; }
 </style>
