@@ -295,6 +295,7 @@ import {
   DeleteSegmentCommand,
   RemoveLaneConnectorCommand,
   SetCrosswalkCommand,
+  SetElevationCommand,
   SetLaneArrowCommand,
   SetLaneRestrictionCommand,
   SetNodeControlModeCommand,
@@ -574,21 +575,21 @@ function onLaneBusOnlyChange(laneId: string, ev: Event): void {
 function onElevationModeChange(ev: Event): void {
   if (!selectedSegment.value) return
   const mode = (ev.target as HTMLSelectElement).value as ElevationMode
-  void updateSegment({ elevation: { ...selectedSegment.value.elevation, mode } })
+  void executePanelCommand(new SetElevationCommand(selectedSegment.value.id, { ...selectedSegment.value.elevation, mode }))
 }
 
 function onElevationStartChange(ev: Event): void {
   if (!selectedSegment.value) return
   const startZ = readFiniteNumber(ev)
   if (startZ === null) return
-  void updateSegment({ elevation: { ...selectedSegment.value.elevation, startZ } })
+  void executePanelCommand(new SetElevationCommand(selectedSegment.value.id, { ...selectedSegment.value.elevation, startZ }))
 }
 
 function onElevationEndChange(ev: Event): void {
   if (!selectedSegment.value) return
   const endZ = readFiniteNumber(ev)
   if (endZ === null) return
-  void updateSegment({ elevation: { ...selectedSegment.value.elevation, endZ } })
+  void executePanelCommand(new SetElevationCommand(selectedSegment.value.id, { ...selectedSegment.value.elevation, endZ }))
 }
 
 async function applyActiveProfile(): Promise<void> {

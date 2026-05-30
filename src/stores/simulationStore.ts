@@ -12,6 +12,7 @@ import type {
   SimulationStats,
   SimulationFrame,
   LaneMetricSnapshot,
+  VehicleMixConfig,
 } from '@/types/simulation'
 import type { SimulationWorkerApi } from '@/workers/simulation.worker'
 import {
@@ -102,11 +103,15 @@ export const useSimulationStore = defineStore('simulation', () => {
     await worker.start()
     state.value = 'RUNNING'
     lastTickAt = performance.now()
+    storeEventBus.emit('simulation:started', {})
+    storeEventBus.emit('simulation:state-changed', { running: true })
   }
 
   async function pause(): Promise<void> {
     await worker?.pause()
     state.value = 'PAUSED'
+    storeEventBus.emit('simulation:paused', {})
+    storeEventBus.emit('simulation:state-changed', { running: false })
   }
 
   async function tick(now = performance.now()): Promise<SimulationFrame | null> {
@@ -121,12 +126,15 @@ export const useSimulationStore = defineStore('simulation', () => {
       laneMetrics.value = frame.laneMetrics
       storeEventBus.emit('simulation:metrics-updated', { laneMetrics: frame.laneMetrics })
     }
+    storeEventBus.emit('simulation:frame-updated', { frameData: frame })
     return frame
   }
 
   async function stop(): Promise<void> {
     await worker?.reset()
     reset()
+    storeEventBus.emit('simulation:stopped', {})
+    storeEventBus.emit('simulation:state-changed', { running: false })
   }
 
   function setCurrentTime(t: number): void {
@@ -147,6 +155,12 @@ export const useSimulationStore = defineStore('simulation', () => {
 
   function setODMatrix(matrix: ODMatrix): void {
     odMatrix.value = matrix
+    storeEventBus.emit('simulation:od-matrix-changed', {})
+  }
+
+  function setVehicleMix(mix: VehicleMixConfig): void {
+    vehicleMix.value = mix
+    storeEventBus.emit('simulation:vehicle-mix-changed', {})
   }
 
   function addODPair(): void {
@@ -202,8 +216,12 @@ export const useSimulationStore = defineStore('simulation', () => {
     isRunning, progress,
     initSharedBuffer, getSharedBuffer, getVehicleView,
     start, pause, tick, stop,
+    /** @alias start — per design doc naming */
+    startSimulation: start,
+    /** @alias pause — per design doc naming */
+    pauseSimulation: pause,
     setState, setCurrentTime, setVehicleCount, setTimeScale, setSimulatedDuration,
-    setODMatrix, addODPair, updateODPair, removeODPair,
+    setODMatrix, setVehicleMix, addODPair, updateODPair, removeODPair,
     setIDMParams, setMOBILParams, updateStats, reset,
   }
 })

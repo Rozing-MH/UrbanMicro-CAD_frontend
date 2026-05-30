@@ -1,5 +1,8 @@
 export { HistoryStack, historyStack } from './HistoryStack'
 export {
+  DrawRoadCommand,
+} from './roadCommands'
+export type {
   AddSegmentCommand,
   AddSignalStepCommand,
   AddTrafficLightCommand,
@@ -10,6 +13,7 @@ export {
   RemoveSignalStepCommand,
   SetCrosswalkCommand,
   SetCrossSectionCommand,
+  SetElevationCommand,
   SetLaneArrowCommand,
   SetLaneConnectorCommand,
   SetLaneRestrictionCommand,

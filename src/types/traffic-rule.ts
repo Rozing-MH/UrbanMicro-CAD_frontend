@@ -1,4 +1,5 @@
 import type { TurnDirection } from './road-network'
+export type { TurnDirection } from './road-network'
 import type { ODMatrix, VehicleMixConfig } from './simulation'
 
 // ============================================================

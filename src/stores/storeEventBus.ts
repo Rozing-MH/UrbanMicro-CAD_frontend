@@ -3,20 +3,37 @@
 // Per design doc: Store 间通过事件总线解耦，禁止 Store 之间直接引用。
 // ============================================================
 
-import type { LaneMetricSnapshot } from '@/types/simulation'
+import type { CrossSectionProfile } from '@/types/road-network'
+import type { TurnDirection } from '@/types/traffic-rule'
+import type { LaneMetricSnapshot, SimulationFrame } from '@/types/simulation'
 
 export interface StoreEventMap {
+  // --- road-network ---
   'road-network:segment-added': { segmentId: string }
   'road-network:segment-removed': { segmentId: string }
+  'road-network:segment-deleted': { segmentId: string; cascadeRuleCount: number }
+  'road-network:segment-upgraded': { segmentId: string; oldProfile: CrossSectionProfile }
   'road-network:node-moved': { nodeId: string }
+  'road-network:node-changed': { nodeId: string }
   'road-network:topology-changed': { version: number }
+  'road-network:profile-changed': { segmentId: string; oldProfile: CrossSectionProfile; newProfile: CrossSectionProfile }
+  // --- traffic-rule ---
   'traffic-rule:rule-changed': { ruleType: string; entityId: string }
+  'traffic-rule:lane-arrow-changed': { nodeId: string; laneId: string; directions: TurnDirection[] }
   'traffic-rule:validation-requested': {}
+  // --- cross-section ---
   'cross-section:profile-changed': { profileId: string; segmentId?: string }
+  // --- simulation ---
   'simulation:state-changed': { running: boolean }
+  'simulation:started': {}
+  'simulation:paused': {}
+  'simulation:stopped': {}
+  'simulation:vehicle-spawned': { vehicleId: string }
+  'simulation:frame-updated': { frameData: SimulationFrame }
   'simulation:metrics-updated': { laneMetrics: LaneMetricSnapshot[] }
   'simulation:od-matrix-changed': {}
   'simulation:vehicle-mix-changed': {}
+  // --- evaluation ---
   'evaluation:report-generated': { reportId: string }
 }
 

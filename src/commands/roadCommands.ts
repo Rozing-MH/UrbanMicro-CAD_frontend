@@ -1,6 +1,7 @@
 import type { ICommand } from '@/types/commands'
 import type {
   CrossSectionProfile,
+  ElevationProfile,
   Lane,
   LaneArrow,
   MeshData,
@@ -111,7 +112,7 @@ function restoreRuleSnapshot(snapshot: RuleSnapshot): void {
   for (const restriction of snapshot.turnRestrictions) rules.addTurnRestriction({ ...restriction })
 }
 
-export class AddSegmentCommand implements ICommand {
+export class DrawRoadCommand implements ICommand {
   readonly timestamp = Date.now()
   private segmentId: string
   private startNodeId: string
@@ -148,9 +149,12 @@ export class AddSegmentCommand implements ICommand {
   }
 
   getDescription(): string {
-    return `Add road segment ${this.segmentId}`
+    return `Draw road segment ${this.segmentId}`
   }
 }
+
+/** @deprecated Use DrawRoadCommand instead */
+export type AddSegmentCommand = DrawRoadCommand
 
 export class DeleteSegmentCommand implements ICommand {
   readonly timestamp = Date.now()
@@ -252,7 +256,7 @@ export class UpgradeSegmentCommand implements ICommand {
   }
 }
 
-export class CreateParallelSegmentCommand extends AddSegmentCommand {
+export class CreateParallelSegmentCommand extends DrawRoadCommand {
   getDescription(): string {
     return 'Create parallel road segment'
   }
@@ -333,6 +337,36 @@ export class UpdateSegmentCommand implements ICommand {
 
   getDescription(): string {
     return `Update road segment ${this.segmentId}`
+  }
+}
+
+export class SetElevationCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private oldProfile: ElevationProfile | null = null
+
+  constructor(
+    private segmentId: string,
+    private newProfile: ElevationProfile,
+  ) {}
+
+  execute(): void {
+    const store = useRoadNetworkStore()
+    const segment = store.getSegment(this.segmentId)
+    if (!segment) throw new Error('无法设置高程：目标路段不存在')
+    if (!this.oldProfile) {
+      this.oldProfile = { ...segment.elevation }
+    }
+    store.updateSegment(this.segmentId, { elevation: { ...this.newProfile } })
+  }
+
+  undo(): void {
+    if (!this.oldProfile) return
+    const store = useRoadNetworkStore()
+    store.updateSegment(this.segmentId, { elevation: { ...this.oldProfile } })
+  }
+
+  getDescription(): string {
+    return `Set elevation on segment ${this.segmentId}`
   }
 }
 

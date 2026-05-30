@@ -74,7 +74,7 @@ import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { useCrossSectionEditorStore } from '@/stores/crossSectionEditorStore'
 import { historyStack, type HistorySessionId } from '@/commands/HistoryStack'
 import {
-  AddSegmentCommand,
+  DrawRoadCommand,
   AddTrafficLightCommand,
   CreateParallelSegmentCommand,
   DeleteSegmentCommand,
@@ -1331,7 +1331,7 @@ async function handleRoadDraw(point: Point2D, sessionId: HistorySessionId): Prom
         meshData: await buildRoadMesh(curveCenterLine, profile, elevation.startZ),
       })
       if (!isCurrentHistorySession(sessionId)) return
-      const cmd = new AddSegmentCommand(segment, startNode, curveEndNode.value!, true, curveEndNodeCreated.value)
+      const cmd = new DrawRoadCommand(segment, startNode, curveEndNode.value!, true, curveEndNodeCreated.value)
       await executeHistoryCommand(cmd, sessionId)
       if (!isCurrentHistorySession(sessionId)) return
       roadRenderer.addSegment(segment)
@@ -1371,7 +1371,7 @@ async function handleRoadDraw(point: Point2D, sessionId: HistorySessionId): Prom
         meshData: await buildRoadMesh(centerLine, profile, elevation.startZ),
       })
       if (!isCurrentHistorySession(sessionId)) return
-      const cmd = new AddSegmentCommand(segment, startNode, found.node, false, found.created)
+      const cmd = new DrawRoadCommand(segment, startNode, found.node, false, found.created)
       await executeHistoryCommand(cmd, sessionId)
       if (!isCurrentHistorySession(sessionId)) return
       roadRenderer.addSegment(segment)

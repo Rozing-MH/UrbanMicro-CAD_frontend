@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import type { CrossSectionProfile, LaneDef, MedianDef, SidewalkDef, LaneType, LaneDirection } from '@/types/road-network'
 import { templateApi } from '@/api/templateApi'
 import { registerCrossSectionProfiles } from '@/utils/roadProfiles'
+import { storeEventBus } from '@/stores/storeEventBus'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { SetCrossSectionCommand } from '@/commands/roadCommands'
@@ -133,6 +134,7 @@ export const useCrossSectionEditorStore = defineStore('crossSectionEditor', () =
     historyStack.execute(cmd, sessionId)
     registerCrossSectionProfiles([p])
     editorState.setActiveProfile(p.id)
+    storeEventBus.emit('cross-section:profile-changed', { profileId: p.id, segmentId })
 
     const roadStore = useRoadNetworkStore()
     roadStore.setActiveCrossSection(p.id)

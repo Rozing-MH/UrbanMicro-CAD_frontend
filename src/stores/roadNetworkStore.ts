@@ -108,6 +108,7 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     if ('position' in patch) {
       storeEventBus.emit('road-network:node-moved', { nodeId: id })
     }
+    storeEventBus.emit('road-network:node-changed', { nodeId: id })
     storeEventBus.emit('road-network:topology-changed', { version: topologyVersion.value })
   }
 
@@ -167,6 +168,7 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     }
     topologyVersion.value++
     storeEventBus.emit('road-network:segment-removed', { segmentId: id })
+    storeEventBus.emit('road-network:segment-deleted', { segmentId: id, cascadeRuleCount: 0 })
     storeEventBus.emit('road-network:topology-changed', { version: topologyVersion.value })
   }
 
@@ -236,6 +238,7 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
   ): { oldLaneIds: string[]; newLaneIds: string[]; removedLaneIds: string[] } {
     const existing = segments.value.get(segmentId)
     if (!existing) return { oldLaneIds: [], newLaneIds: [], removedLaneIds: [] }
+    const oldProfile = existing.profile
     segments.value.set(segmentId, { ...existing, profile, meshData })
     const laneResult = rebuildSegmentLanes(segmentId)
     for (const he of Array.from(halfEdges.value.values())) {
@@ -243,6 +246,8 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     }
     ensureSegmentHalfEdges(segments.value.get(segmentId)!)
     topologyVersion.value++
+    storeEventBus.emit('road-network:segment-upgraded', { segmentId, oldProfile })
+    storeEventBus.emit('road-network:profile-changed', { segmentId, oldProfile, newProfile: profile })
     return laneResult
   }
 
@@ -294,6 +299,11 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
   function setLaneArrow(arrow: LaneArrow): void {
     laneArrows.value.set(laneArrowKey(arrow), arrow)
     topologyVersion.value++
+    storeEventBus.emit('traffic-rule:lane-arrow-changed', {
+      nodeId: arrow.nodeId,
+      laneId: arrow.laneId,
+      directions: [...arrow.allowedDirections],
+    })
   }
 
   function removeLaneArrow(nodeId: string, laneId: string): void {

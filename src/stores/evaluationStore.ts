@@ -4,9 +4,12 @@ import type { LOSGrade, EvaluationResult, HeatmapConfig, SegmentMetric } from '@
 import { DEFAULT_HEATMAP_STOPS, delayToLOS } from '@/types/evaluation'
 import type { LaneMetricSnapshot } from '@/types/simulation'
 import { computeEvaluation, type BridgeContext } from '@/services/evaluationBridge'
-import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { storeEventBus } from '@/stores/storeEventBus'
 import { exportAllCsv } from '@/services/csvExport'
+// Lazy accessor — imported here but only called inside actions to avoid
+// tight module-level coupling. Pinia factory functions are safe to import;
+// they only create the store instance when invoked.
+import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 
 export type EvalMode = 'NONE' | 'LOS' | 'SPEED' | 'DENSITY' | 'DELAY'
 
@@ -72,6 +75,7 @@ export const useEvaluationStore = defineStore('evaluation', () => {
 
   function setReportId(id: string | null): void {
     reportId.value = id
+    if (id) storeEventBus.emit('evaluation:report-generated', { reportId: id })
   }
 
   function setComputing(c: boolean): void {
@@ -79,18 +83,18 @@ export const useEvaluationStore = defineStore('evaluation', () => {
   }
 
   /**
-   * Build nodeId → laneId[] mapping from roadNetworkStore.
+   * Build nodeId → laneId[] mapping from lanes and segments.
    * A lane belongs ONLY to the end node of its segment (the downstream
    * intersection where vehicles actually enter the junction area).
-   * This avoids double-counting lane metrics across both endpoints.
    */
-  function buildNodeToLanes(): Map<string, string[]> {
-    const roadStore = useRoadNetworkStore()
+  function buildNodeToLanes(
+    lanes: Map<string, { id: string; segmentId: string }>,
+    segments: Map<string, { endNodeId: string }>,
+  ): Map<string, string[]> {
     const mapping = new Map<string, string[]>()
-    for (const lane of roadStore.lanes.values()) {
-      const seg = roadStore.getSegment(lane.segmentId)
+    for (const lane of lanes.values()) {
+      const seg = segments.get(lane.segmentId)
       if (!seg) continue
-      // Lane only contributes to the end node (downstream intersection)
       const nodeId = seg.endNodeId
       let arr = mapping.get(nodeId)
       if (!arr) {
@@ -105,8 +109,10 @@ export const useEvaluationStore = defineStore('evaluation', () => {
   /**
    * Main bridge action: receive lane metrics from simulation,
    * aggregate to segment/intersection level, and update store.
+   * Accepts optional BridgeContext for decoupled callers;
+   * falls back to lazy roadNetworkStore access if not provided.
    */
-  function updateFromSimulation(laneMetrics: LaneMetricSnapshot[]): void {
+  function updateFromSimulation(laneMetrics: LaneMetricSnapshot[], ctx?: BridgeContext): void {
     if (laneMetrics.length === 0) return
 
     // Preserve raw lane-level metrics for per-lane UI display
@@ -116,12 +122,18 @@ export const useEvaluationStore = defineStore('evaluation', () => {
     }
     laneMetricsMap.value = newLaneMap
 
-    const roadStore = useRoadNetworkStore()
-    const bridgeCtx: BridgeContext = {
-      lanes: roadStore.lanes,
-      segments: roadStore.segments,
-      nodes: roadStore.nodes,
-      nodeToLanes: buildNodeToLanes(),
+    // Lazy accessor — only invoked at call time, not at module init
+    let bridgeCtx = ctx
+    if (!bridgeCtx) {
+      const roadStore = useRoadNetworkStore()
+      bridgeCtx = {
+        lanes: roadStore.lanes,
+        segments: roadStore.segments,
+        nodes: roadStore.nodes,
+        nodeToLanes: buildNodeToLanes(roadStore.lanes, roadStore.segments),
+      }
+    } else if (!bridgeCtx.nodeToLanes) {
+      bridgeCtx = { ...bridgeCtx, nodeToLanes: buildNodeToLanes(bridgeCtx.lanes as Map<string, { id: string; segmentId: string }>, bridgeCtx.segments as Map<string, { endNodeId: string }>) }
     }
 
     const result = computeEvaluation(laneMetrics, bridgeCtx)
@@ -170,11 +182,49 @@ export const useEvaluationStore = defineStore('evaluation', () => {
     })
   }
 
+  /**
+   * Generate a report via backend API.
+   * Per design doc: EvaluationStore.generateReport()
+   */
+  async function generateReport(projectId: string): Promise<string | null> {
+    isComputing.value = true
+    try {
+      const { reportApi } = await import('@/api/reportApi')
+      const summary = await reportApi.generate(projectId, {
+        segmentMetrics: Object.fromEntries(segmentMetrics.value),
+        intersectionResults: Object.fromEntries(results.value),
+      })
+      reportId.value = summary.id
+      storeEventBus.emit('evaluation:report-generated', { reportId: summary.id })
+      return summary.id
+    } catch {
+      return null
+    } finally {
+      isComputing.value = false
+    }
+  }
+
+  /**
+   * Export evaluation report as PDF via backend API.
+   * Per design doc: EvaluationStore.exportPDF()
+   */
+  async function exportPDF(projectId: string): Promise<Blob | null> {
+    try {
+      const { reportApi } = await import('@/api/reportApi')
+      return await reportApi.exportReport(projectId, 'PDF', {
+        segmentMetrics: Object.fromEntries(segmentMetrics.value),
+        intersectionResults: Object.fromEntries(results.value),
+      })
+    } catch {
+      return null
+    }
+  }
+
   return {
     evalMode, results, segmentMetrics, laneMetricsMap, heatmapConfig, reportId, isComputing,
     networkLOS, worstIntersectionId,
     setEvalMode, setResult, setSegmentMetric, bulkSetMetrics,
     setHeatmapConfig, setReportId, setComputing, clear,
-    updateFromSimulation, exportCSV,
+    updateFromSimulation, exportCSV, generateReport, exportPDF,
   }
 })

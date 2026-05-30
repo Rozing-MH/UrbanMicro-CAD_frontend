@@ -13,6 +13,9 @@ import type {
 } from '@/types/traffic-rule'
 import type { ODMatrix, VehicleMixConfig } from '@/types/simulation'
 import { DEFAULT_VEHICLE_MIX } from '@/types/simulation'
+// Lazy accessor — imported here but only called inside actions to avoid
+// tight module-level coupling. Pinia factory functions are safe to import;
+// they only create the store instance when invoked.
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 
 export const useTrafficRuleStore = defineStore('trafficRule', () => {
