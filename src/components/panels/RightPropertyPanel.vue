@@ -226,6 +226,23 @@
               <label>LOS</label>
               <span class="los-grade-inline" :data-grade="evalSelectedSegmentMetric.los">{{ evalSelectedSegmentMetric.los }}</span>
             </div>
+            <!-- Per-lane metrics table -->
+            <template v-if="evalSelectedLanes.length > 0">
+              <h4 class="sub-title">车道级指标</h4>
+              <table class="lane-metric-table">
+                <thead>
+                  <tr><th>#</th><th>速度</th><th>流量</th><th>排队</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in evalSelectedLanes" :key="item.laneId">
+                    <td>{{ item.index + 1 }}</td>
+                    <td>{{ item.avgSpeed.toFixed(1) }}</td>
+                    <td>{{ item.throughput.toFixed(0) }}</td>
+                    <td>{{ item.currentQueueLen }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </template>
           </template>
           <!-- Selected intersection LOS -->
           <template v-if="evalSelectedIntersectionResult">
@@ -319,6 +336,19 @@ const evalSelectedSegmentMetric = computed(() => {
 const evalSelectedIntersectionResult = computed(() => {
   if (!selectedNode.value) return null
   return evalStore.results.get(selectedNode.value.id) ?? null
+})
+
+/** Per-lane metrics for the selected segment, joined with lane index */
+const evalSelectedLanes = computed(() => {
+  if (!selectedSegment.value) return []
+  const segLanes = road.getLanesBySegment(selectedSegment.value.id)
+  return segLanes
+    .map((lane) => {
+      const lm = evalStore.laneMetricsMap.get(lane.id)
+      if (!lm) return null
+      return { laneId: lane.id, index: lane.index, avgSpeed: lm.avgSpeed, throughput: lm.throughput, currentQueueLen: lm.currentQueueLen }
+    })
+    .filter(Boolean) as Array<{ laneId: string; index: number; avgSpeed: number; throughput: number; currentQueueLen: number }>
 })
 
 const selectedSegmentLanes = computed<Lane[]>(() => {
@@ -732,4 +762,23 @@ function onRunValidation(): void {
 .los-grade-inline[data-grade='D'] { background: #e67e22; color: #fff; }
 .los-grade-inline[data-grade='E'] { background: #e74c3c; color: #fff; }
 .los-grade-inline[data-grade='F'] { background: #c0392b; color: #fff; }
+.lane-metric-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 6px;
+}
+.lane-metric-table th {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid #383e4a;
+  color: #8e94a0;
+  font-weight: 600;
+}
+.lane-metric-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid #2a2f3a;
+  color: #d8dde6;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
 </style>

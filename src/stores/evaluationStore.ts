@@ -12,6 +12,8 @@ export const useEvaluationStore = defineStore('evaluation', () => {
   const evalMode = ref<EvalMode>('NONE')
   const results = ref<Map<string, EvaluationResult>>(new Map())
   const segmentMetrics = ref<Map<string, SegmentMetric>>(new Map())
+  /** Raw per-lane metrics from simulation (laneId → LaneMetricSnapshot) */
+  const laneMetricsMap = ref<Map<string, LaneMetricSnapshot>>(new Map())
   const heatmapConfig = ref<HeatmapConfig>({
     mode: 'OFF',
     colorStops: DEFAULT_HEATMAP_STOPS,
@@ -104,6 +106,13 @@ export const useEvaluationStore = defineStore('evaluation', () => {
   function updateFromSimulation(laneMetrics: LaneMetricSnapshot[]): void {
     if (laneMetrics.length === 0) return
 
+    // Preserve raw lane-level metrics for per-lane UI display
+    const newLaneMap = new Map<string, LaneMetricSnapshot>()
+    for (const lm of laneMetrics) {
+      newLaneMap.set(lm.laneId, lm)
+    }
+    laneMetricsMap.value = newLaneMap
+
     const roadStore = useRoadNetworkStore()
     const bridgeCtx: BridgeContext = {
       lanes: roadStore.lanes,
@@ -130,13 +139,14 @@ export const useEvaluationStore = defineStore('evaluation', () => {
   function clear(): void {
     results.value.clear()
     segmentMetrics.value.clear()
+    laneMetricsMap.value = new Map()
     evalMode.value = 'NONE'
     reportId.value = null
     isComputing.value = false
   }
 
   return {
-    evalMode, results, segmentMetrics, heatmapConfig, reportId, isComputing,
+    evalMode, results, segmentMetrics, laneMetricsMap, heatmapConfig, reportId, isComputing,
     networkLOS, worstIntersectionId,
     setEvalMode, setResult, setSegmentMetric, bulkSetMetrics,
     setHeatmapConfig, setReportId, setComputing, clear,
