@@ -6,6 +6,7 @@ import type { LaneMetricSnapshot } from '@/types/simulation'
 import { computeEvaluation, type BridgeContext } from '@/services/evaluationBridge'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { storeEventBus } from '@/stores/storeEventBus'
+import { exportAllCsv } from '@/services/csvExport'
 
 export type EvalMode = 'NONE' | 'LOS' | 'SPEED' | 'DENSITY' | 'DELAY'
 
@@ -157,11 +158,23 @@ export const useEvaluationStore = defineStore('evaluation', () => {
   }
   storeEventBus.on('simulation:metrics-updated', onMetricsUpdated)
 
+  /**
+   * Export all evaluation data as CSV files (local generation, no backend).
+   * Per design doc FR6.5: EvaluationStore.exportCSV()
+   */
+  function exportCSV(): void {
+    exportAllCsv({
+      segmentMetrics: segmentMetrics.value,
+      laneMetrics: laneMetricsMap.value,
+      intersectionResults: results.value,
+    })
+  }
+
   return {
     evalMode, results, segmentMetrics, laneMetricsMap, heatmapConfig, reportId, isComputing,
     networkLOS, worstIntersectionId,
     setEvalMode, setResult, setSegmentMetric, bulkSetMetrics,
     setHeatmapConfig, setReportId, setComputing, clear,
-    updateFromSimulation,
+    updateFromSimulation, exportCSV,
   }
 })

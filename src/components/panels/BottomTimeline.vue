@@ -72,6 +72,12 @@
         <div class="stat-label">路网 LOS</div>
         <div class="stat-value los-grade" :data-grade="evalStore.networkLOS">{{ evalStore.networkLOS }}</div>
       </div>
+      <button
+        v-if="evalStore.segmentMetrics.size > 0 || evalStore.results.size > 0"
+        class="export-btn"
+        title="导出评估数据 (CSV)"
+        @click="evalStore.exportCSV()"
+      >⬇ CSV</button>
     </div>
   </footer>
 </template>
@@ -252,4 +258,10 @@ function setHiddenView(): void {
 .los-grade[data-grade='D'] { background: #e67e22; color: #fff; }
 .los-grade[data-grade='E'] { background: #e74c3c; color: #fff; }
 .los-grade[data-grade='F'] { background: #c0392b; color: #fff; }
+.export-btn {
+  padding: 4px 10px; margin-left: 8px;
+  background: #2a2f3a; border: 1px solid #383e4a; color: #c8cdd5;
+  border-radius: 3px; cursor: pointer; font-size: 11px; white-space: nowrap;
+}
+.export-btn:hover { background: #313847; color: #fff; }
 </style>
