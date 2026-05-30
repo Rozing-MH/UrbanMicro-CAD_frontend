@@ -98,6 +98,21 @@ interface SimContext {
 
   // A* route cache: "fromLaneId:toLaneId" → RouteWaypoint[]
   routeCache: Map<string, RouteWaypoint[]>
+
+  // PID tracker state per vehicle: vehicleId → { integral, prevError }
+  pidState: Map<string, { integral: number; prevError: number }>
+
+  // Lane-level rolling statistics
+  laneStats: Map<string, {
+    vehicleCount: number
+    totalSpeed: number
+    maxQueueLen: number
+    currentQueueLen: number
+    throughput: number
+    totalDelay: number
+  }>
+  statsInterval: number
+  statsAccumulator: number
 }
 
 const ctx: SimContext = {
@@ -123,6 +138,10 @@ const ctx: SimContext = {
   laneVehicleIndex: new Map(),
   laneIds: [],
   routeCache: new Map(),
+  pidState: new Map(),
+  laneStats: new Map(),
+  statsInterval: 5, // compute stats every 5 sim-seconds
+  statsAccumulator: 0,
   completedVehicles: 0,
   time: 0,
   running: false,
@@ -827,6 +846,126 @@ function findRoute(fromLaneId: string, toNodeId: string, vehicleType: VehicleTyp
 }
 
 // ============================================================
+// PID Tracker for Connector Guidance
+// ============================================================
+
+const PID_KP = 1.2
+const PID_KI = 0.0
+const PID_KD = 0.8
+
+function pidCompute(vehicleId: string, setpoint: number, actual: number): number {
+  let state = ctx.pidState.get(vehicleId)
+  if (!state) {
+    state = { integral: 0, prevError: 0 }
+    ctx.pidState.set(vehicleId, state)
+  }
+  const error = setpoint - actual
+  state.integral += error
+  // Anti-windup
+  state.integral = Math.max(-5, Math.min(5, state.integral))
+  const derivative = error - state.prevError
+  state.prevError = error
+  return PID_KP * error + PID_KI * state.integral + PID_KD * derivative
+}
+
+/** Compute lateral offset to follow a LaneConnector through an intersection */
+function computeConnectorGuidance(veh: SimVehicle): number | null {
+  // Only apply near end of lane (entering intersection zone)
+  if (veh.progress < 0.7) return null
+
+  // Find the connector from planned route
+  const nextIdx = veh.currentRouteIndex + 1
+  if (nextIdx >= veh.plannedRoute.length) return null
+  const nextWaypoint = veh.plannedRoute[nextIdx]
+  if (!nextWaypoint.connectorId) return null
+
+  // Find the connector
+  const connectors = ctx.laneConnectorsByFrom.get(veh.currentLaneId) ?? []
+  const connector = connectors.find(lc => lc.id === nextWaypoint.connectorId)
+  if (!connector) return null
+
+  const geo = ctx.laneGeoMap.get(veh.currentLaneId)
+  if (!geo) return null
+
+  // Compute target lateral offset from connector anchors
+  // fromAnchor.x is the lateral position on the source lane
+  // The lane center is at offset 0, so fromAnchor relative to center
+  // gives us the target offset as the vehicle transitions
+  const laneWidth = geo.width
+
+  // Interpolate: at progress=0.7 start tracking, at progress=1.0 fully on connector
+  const t = Math.min(1, (veh.progress - 0.7) / 0.3)
+
+  // Target offset = position relative to lane center
+  // fromAnchor.x is in world coords; approximate lateral offset from lane center
+  // For simplicity: compute the lateral difference between connector entry point and lane center
+  const fromAnchorOffset = connector.fromAnchor.x !== undefined ? 0 : 0 // anchors are world XY, not lane-relative
+
+  // Simpler approach: compute lateral offset based on connector direction
+  // The connector goes from fromLane to toLane; the lateral offset is determined
+  // by the relative position of fromAnchor within the lane width
+  // We approximate: target offset = (connector.toAnchor direction) * t
+  const dx = connector.toAnchor.x - connector.fromAnchor.x
+  const dy = connector.toAnchor.y - connector.fromAnchor.y
+  const turnAngle = Math.atan2(dy, dx)
+
+  // For a straight connector: offset ~0, for left turn: negative, for right: positive
+  // Scale by progress through intersection zone
+  const maxLateralShift = laneWidth * 0.5
+  // Classify turn direction by angle (simplified)
+  let targetOffset = 0
+  if (Math.abs(turnAngle) > 0.3) {
+    // Non-straight: lateral shift toward target lane
+    targetOffset = turnAngle > 0 ? -maxLateralShift : maxLateralShift
+  }
+  const setpoint = targetOffset * t
+
+  // PID correction
+  return pidCompute(veh.id, setpoint, veh.lateralOffset)
+}
+
+// ============================================================
+// Lane-Level Rolling Statistics
+// ============================================================
+
+function updateLaneStats(): void {
+  // Reset per-lane counters
+  for (const [laneId, stats] of ctx.laneStats) {
+    stats.vehicleCount = 0
+    stats.totalSpeed = 0
+    stats.currentQueueLen = 0
+  }
+
+  // Aggregate from vehicles
+  for (const veh of ctx.vehicles.values()) {
+    let stats = ctx.laneStats.get(veh.currentLaneId)
+    if (!stats) {
+      stats = { vehicleCount: 0, totalSpeed: 0, maxQueueLen: 0, currentQueueLen: 0, throughput: 0, totalDelay: 0 }
+      ctx.laneStats.set(veh.currentLaneId, stats)
+    }
+    stats.vehicleCount++
+    stats.totalSpeed += veh.currentSpeed
+    if (veh.currentSpeed < 0.5) {
+      stats.currentQueueLen++
+    }
+    // Delay: difference between desired travel time and actual
+    const restriction = ctx.laneRestrictions.get(veh.currentLaneId)
+    const speedLimitMs = restriction?.speedLimit && restriction.speedLimit > 0
+      ? restriction.speedLimit / 3.6
+      : VEHICLE_SPECS[veh.type].maxSpeed / 3.6
+    const delay = Math.max(0, speedLimitMs - veh.currentSpeed)
+    stats.totalDelay += delay
+  }
+
+  // Update max queue & reset current queue
+  for (const stats of ctx.laneStats.values()) {
+    if (stats.currentQueueLen > stats.maxQueueLen) {
+      stats.maxQueueLen = stats.currentQueueLen
+    }
+  }
+}
+
+// ============================================================
 // Lane Transition
 // ============================================================
 
@@ -1041,6 +1180,18 @@ function stepVehicles(dt: number): void {
         const startOffset = newLaneChangeState === 'CHANGING_LEFT' ? 1 : -1
         newLateralOffset = startOffset * (1 - newLaneChangeProgress) * (geo?.width ?? 3.5)
       }
+    } else {
+      // --- Connector guidance: PID lateral correction near intersections ---
+      const pidCorrection = computeConnectorGuidance(veh)
+      if (pidCorrection !== null) {
+        newLateralOffset = veh.lateralOffset + pidCorrection * dt
+        // Clamp lateral offset to lane width
+        const maxOffset = (geo?.width ?? 3.5) * 0.8
+        newLateralOffset = Math.max(-maxOffset, Math.min(maxOffset, newLateralOffset))
+      } else {
+        // Decay lateral offset back to center when not in intersection zone
+        newLateralOffset = veh.lateralOffset * (1 - dt * 2) // decay over ~0.5s
+      }
     }
 
     // Commit vehicle update
@@ -1149,6 +1300,9 @@ const simApi = {
     ctx.vehicles.clear()
     ctx.laneVehicleIndex.clear()
     ctx.routeCache.clear()
+    ctx.pidState.clear()
+    ctx.laneStats.clear()
+    ctx.statsAccumulator = 0
     ctx.completedVehicles = 0
     if (ctx.vehicleBuffer) ctx.vehicleBuffer.fill(0)
   },
@@ -1177,32 +1331,40 @@ const simApi = {
     // 2. Spawn new vehicles (Poisson)
     spawnVehicles(dt)
 
-    // 3. Step all vehicles (IDM + MOBIL + lane transition)
+    // 3. Step all vehicles (IDM + MOBIL + lane transition + connector guidance)
     stepVehicles(dt)
 
     // 4. Flush to buffer
     flushToBuffer()
 
-    // 5. Compute stats
+    // 5. Update lane-level rolling stats periodically
+    ctx.statsAccumulator += dt
+    if (ctx.statsAccumulator >= ctx.statsInterval) {
+      ctx.statsAccumulator = 0
+      updateLaneStats()
+    }
+
+    // 6. Aggregate global stats from lane stats
     let totalSpeed = 0
+    let totalDelay = 0
     let maxQueue = 0
+    let queueCount = 0
     for (const veh of ctx.vehicles.values()) {
       totalSpeed += veh.currentSpeed
+      const restriction = ctx.laneRestrictions.get(veh.currentLaneId)
+      const speedLimitMs = restriction?.speedLimit && restriction.speedLimit > 0
+        ? restriction.speedLimit / 3.6
+        : VEHICLE_SPECS[veh.type].maxSpeed / 3.6
+      totalDelay += Math.max(0, speedLimitMs - veh.currentSpeed)
     }
-    // Count vehicles waiting at red lights
-    const queueByLane = new Map<string, number>()
-    for (const veh of ctx.vehicles.values()) {
-      if (veh.currentSpeed < 0.5) {
-        const count = queueByLane.get(veh.currentLaneId) ?? 0
-        queueByLane.set(veh.currentLaneId, count + 1)
-      }
-    }
-    for (const count of queueByLane.values()) {
-      if (count > maxQueue) maxQueue = count
+    for (const stats of ctx.laneStats.values()) {
+      if (stats.maxQueueLen > maxQueue) maxQueue = stats.maxQueueLen
+      queueCount += stats.currentQueueLen
     }
 
     const count = ctx.vehicles.size
     const avgSpeed = count > 0 ? totalSpeed / count : 0
+    const avgDelay = count > 0 ? totalDelay / count : 0
 
     return {
       time: ctx.time,
@@ -1211,7 +1373,7 @@ const simApi = {
         totalVehicles: count + ctx.completedVehicles,
         completedVehicles: ctx.completedVehicles,
         averageSpeed: avgSpeed,
-        averageDelay: 0,
+        averageDelay: avgDelay,
         maxQueueLength: maxQueue,
         throughput: ctx.completedVehicles,
       },
