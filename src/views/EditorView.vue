@@ -6,11 +6,16 @@
       <LeftAssetPanel />
 
       <div class="editor-center">
-        <div v-if="loading" class="loading-overlay">加载项目中…</div>
+        <div v-if="loading" class="loading-overlay">
+          <LoaderIcon :size="28" class="spin" />
+          <span>加载项目中…</span>
+        </div>
         <div v-else-if="loadError" class="error-overlay">
-          <div class="error-icon">⚠</div>
+          <CircleAlertIcon :size="32" class="error-icon" />
           <div class="error-text">{{ loadError }}</div>
-          <button class="back-btn" @click="backToDashboard">返回工作台</button>
+          <button class="back-btn" @click="backToDashboard">
+            <ArrowLeftIcon :size="14" /> 返回工作台
+          </button>
         </div>
         <ThreeViewport v-else />
       </div>
@@ -27,6 +32,10 @@
       :role="editor.notification.type === 'error' ? 'alert' : 'status'"
       @click="editor.dismissNotification(editor.notification.id)"
     >
+      <CircleXIcon v-if="editor.notification.type === 'error'" :size="16" />
+      <TriangleAlertIcon v-else-if="editor.notification.type === 'warning'" :size="16" />
+      <InfoIcon v-else-if="editor.notification.type === 'info'" :size="16" />
+      <CheckCircleIcon v-else :size="16" />
       <span class="toast-type">{{ notificationLabel(editor.notification.type) }}</span>
       <span>{{ editor.notification.message }}</span>
     </div>
@@ -36,6 +45,15 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
+import {
+  LoaderIcon,
+  CircleAlertIcon,
+  ArrowLeftIcon,
+  CircleXIcon,
+  TriangleAlertIcon,
+  InfoIcon,
+  CheckCircleIcon,
+} from '@lucide/vue'
 import TopToolbar from '@/components/toolbar/TopToolbar.vue'
 import LeftAssetPanel from '@/components/panels/LeftAssetPanel.vue'
 import RightPropertyPanel from '@/components/panels/RightPropertyPanel.vue'
@@ -166,9 +184,12 @@ function backToDashboard(): void {
   font-size: 14px;
   gap: 12px;
 }
-.error-icon { font-size: 32px; color: var(--color-warning); }
+.loading-overlay .spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.error-icon { color: var(--color-warning); }
 .error-text { color: #e89090; }
 .back-btn {
+  display: inline-flex; align-items: center; gap: 4px;
   margin-top: 6px; padding: 6px 16px;
   background: var(--color-accent-bg); border: none; color: #fff;
   border-radius: var(--radius-md); font-size: 12px;
@@ -176,7 +197,7 @@ function backToDashboard(): void {
 .back-btn:hover { background: #356eb0; }
 .toast {
   position: fixed; bottom: 20px; left: 50%;
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 8px;
   transform: translateX(-50%);
   max-width: min(640px, calc(100vw - 32px));
   padding: 9px 18px;

@@ -6,20 +6,26 @@
         :key="tab.id"
         class="tab-btn"
         :class="{ active: activeTab === tab.id }"
+        :title="tab.title"
         @click="activeTab = tab.id"
       >
-        {{ tab.label }}
+        <component :is="tab.icon" :size="14" />
+        <span class="tab-label">{{ tab.label }}</span>
       </button>
-      <button class="collapse-btn" @click="toggleCollapse">‹</button>
+      <button class="collapse-btn" @click="toggleCollapse" title="收起面板">
+        <ChevronLeftIcon :size="14" />
+      </button>
     </div>
 
     <div class="panel-search">
+      <SearchIcon :size="14" class="search-icon" />
       <input v-model="search" type="text" placeholder="搜索…" />
     </div>
 
     <div v-if="activeTab === 'sections'" class="panel-content">
       <div class="editor-toggle-row">
         <button class="toggle-editor-btn" @click="toggleEditor">
+          <component :is="csEditor.isEditing ? ChevronUpIcon : PlusCircleIcon" :size="14" />
           {{ csEditor.isEditing ? '收起编辑器' : '自定义断面' }}
         </button>
       </div>
@@ -27,8 +33,14 @@
         v-if="csEditor.isEditing"
         @close="csEditor.reset()"
       />
-      <div v-if="loading" class="placeholder">加载中…</div>
-      <div v-else-if="filteredProfiles.length === 0" class="placeholder">暂无横断面模板</div>
+      <div v-if="loading" class="placeholder">
+        <LoaderIcon :size="20" class="spin" />
+        <span>加载中…</span>
+      </div>
+      <div v-else-if="filteredProfiles.length === 0" class="placeholder">
+        <LayersIcon :size="20" />
+        <span>暂无横断面模板</span>
+      </div>
       <ul v-else class="asset-list">
         <li
           v-for="profile in filteredProfiles"
@@ -58,7 +70,14 @@
     </div>
 
     <div v-else-if="activeTab === 'assets'" class="panel-content">
-      <div v-if="loadingAssets" class="placeholder">加载中…</div>
+      <div v-if="loadingAssets" class="placeholder">
+        <LoaderIcon :size="20" class="spin" />
+        <span>加载中…</span>
+      </div>
+      <div v-else-if="filteredAssets.length === 0" class="placeholder">
+        <PackageIcon :size="20" />
+        <span>暂无资产</span>
+      </div>
       <ul v-else class="asset-grid">
         <li v-for="a in filteredAssets" :key="a.id" class="asset-card" draggable="true" @dragstart="onAssetDrag($event, a.id)">
           <div class="asset-card-thumb">{{ a.category[0]?.toUpperCase() ?? '?' }}</div>
@@ -79,17 +98,24 @@
     </div>
 
     <div v-else-if="activeTab === 'simulation'" class="panel-content">
-      <div class="section-title">OD 矩阵</div>
-      <div v-if="sim.odMatrix.pairs.length === 0" class="placeholder small">暂无 OD，点击添加</div>
+      <div class="section-title"><MapPinIcon :size="13" /> OD 矩阵</div>
+      <div v-if="sim.odMatrix.pairs.length === 0" class="placeholder small">
+        <MapPinIcon :size="16" />
+        <span>暂无 OD，点击添加</span>
+      </div>
       <div v-for="(pair, index) in sim.odMatrix.pairs" :key="index" class="od-row">
         <input :value="pair.fromNodeId" placeholder="起点节点" @change="onODChange(index, 'fromNodeId', $event)" />
         <input :value="pair.toNodeId" placeholder="终点节点" @change="onODChange(index, 'toNodeId', $event)" />
         <input :value="pair.volumePerHour" type="number" min="0" step="10" @change="onODChange(index, 'volumePerHour', $event)" />
-        <button @click="sim.removeODPair(index)">×</button>
+        <button class="od-remove-btn" title="删除" @click="sim.removeODPair(index)">
+          <Trash2Icon :size="12" />
+        </button>
       </div>
-      <button class="wide-btn" @click="sim.addODPair()">添加 OD</button>
+      <button class="wide-btn" @click="sim.addODPair()">
+        <PlusIcon :size="14" /> 添加 OD
+      </button>
 
-      <div class="section-title">IDM / MOBIL</div>
+      <div class="section-title"><SettingsIcon :size="13" /> IDM / MOBIL</div>
       <label class="param-row">
         <span>期望速度</span>
         <input type="number" step="0.5" :value="sim.idmParams.desiredSpeed" @change="onIDMChange('desiredSpeed', $event)" />
@@ -111,7 +137,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, type Component } from 'vue'
+import {
+  ChevronLeftIcon,
+  ChevronUpIcon,
+  SearchIcon,
+  PlusCircleIcon,
+  PlusIcon,
+  LoaderIcon,
+  LayersIcon,
+  PackageIcon,
+  MapPinIcon,
+  SettingsIcon,
+  Trash2Icon,
+  RoadIcon,
+  BoxIcon,
+  EyeIcon,
+  GaugeIcon,
+} from '@lucide/vue'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useSimulationStore } from '@/stores/simulationStore'
@@ -128,12 +171,12 @@ const sim = useSimulationStore()
 const csEditor = useCrossSectionEditorStore()
 
 type TabId = 'sections' | 'assets' | 'layers' | 'simulation'
-interface TabDef { id: TabId; label: string }
+interface TabDef { id: TabId; icon: Component; label: string; title: string }
 const tabs: TabDef[] = [
-  { id: 'sections', label: '横断面' },
-  { id: 'assets', label: '资源' },
-  { id: 'layers', label: '图层' },
-  { id: 'simulation', label: '仿真' },
+  { id: 'sections',   icon: RoadIcon,   label: '横断面', title: '横断面模板' },
+  { id: 'assets',     icon: BoxIcon,    label: '资源',   title: '项目资源' },
+  { id: 'layers',     icon: EyeIcon,    label: '图层',   title: '图层可见性' },
+  { id: 'simulation', icon: GaugeIcon,  label: '仿真',   title: '仿真参数' },
 ]
 const activeTab = ref<TabId>('sections')
 const search = ref('')
@@ -291,19 +334,35 @@ onMounted(async () => {
 }
 .left-panel.collapsed { width: 0; border-right: none; }
 .panel-tabs { display: flex; align-items: center; height: 36px; background: #181b21; border-bottom: 1px solid #14171c; }
-.tab-btn { flex: 1; padding: 8px 0; background: transparent; border: none; color: #8e94a0; cursor: pointer; font-size: 12px; }
+.tab-btn {
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+  flex: 1; padding: 8px 0; background: transparent; border: none;
+  color: #8e94a0; cursor: pointer; font-size: 12px;
+}
 .tab-btn.active { color: #fff; border-bottom: 2px solid #4a8cd0; }
-.collapse-btn { width: 28px; height: 100%; background: transparent; border: none; color: #8e94a0; cursor: pointer; }
-.panel-search { padding: 8px; }
+.tab-label { font-size: 11px; }
+.collapse-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 100%; background: transparent; border: none;
+  color: #8e94a0; cursor: pointer; padding: 0;
+}
+.panel-search { position: relative; padding: 8px; }
+.search-icon { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #6a7180; pointer-events: none; }
 .panel-search input {
   width: 100%; box-sizing: border-box;
-  padding: 5px 8px; background: #14171c; border: 1px solid #2a2f3a;
+  padding: 5px 8px 5px 28px; background: #14171c; border: 1px solid #2a2f3a;
   border-radius: 4px; color: #d8dde6; font-size: 12px;
 }
 .panel-content { flex: 1; overflow-y: auto; padding: 4px 8px 12px; }
-.placeholder { padding: 20px 8px; color: #6a7180; text-align: center; font-size: 12px; }
-.placeholder.small { padding: 8px; }
-.section-title { margin: 10px 0 6px; color: #6cb6ff; font-size: 12px; font-weight: 600; }
+.placeholder {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 20px 8px; color: #6a7180; text-align: center; font-size: 12px;
+}
+.placeholder.small { flex-direction: row; gap: 4px; padding: 8px; }
+.section-title {
+  display: flex; align-items: center; gap: 5px;
+  margin: 10px 0 6px; color: #6cb6ff; font-size: 12px; font-weight: 600;
+}
 .od-row { display: grid; grid-template-columns: 1fr 1fr 70px 24px; gap: 4px; margin-bottom: 5px; }
 .od-row input,
 .param-row input {
@@ -311,12 +370,19 @@ onMounted(async () => {
   padding: 4px 6px; background: #14171c; border: 1px solid #2a2f3a;
   color: #d8dde6; border-radius: 3px; font-size: 11px;
 }
-.od-row button,
+.od-remove-btn {
+  display: flex; align-items: center; justify-content: center;
+  background: #2a2f3a; border: 1px solid #383e4a; color: #e06c6c;
+  border-radius: 3px; cursor: pointer; padding: 0;
+}
+.od-remove-btn:hover { background: #3a1f1f; }
 .wide-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  width: 100%; padding: 6px; margin: 4px 0 10px;
   background: #2a2f3a; border: 1px solid #383e4a; color: #d8dde6;
   border-radius: 3px; cursor: pointer; font-size: 11px;
 }
-.wide-btn { width: 100%; padding: 6px; margin: 4px 0 10px; }
+.wide-btn:hover { background: #313847; }
 .param-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: #aab2bf; }
 .param-row input { width: 90px; }
 .asset-list { list-style: none; padding: 0; margin: 0; }
@@ -344,8 +410,11 @@ onMounted(async () => {
 .layer-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .editor-toggle-row { margin-bottom: 6px; }
 .toggle-editor-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   width: 100%; padding: 6px; background: #2c5d99; border: none;
   color: #fff; border-radius: 3px; cursor: pointer; font-size: 12px;
 }
 .toggle-editor-btn:hover { background: #3a6eaa; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
 </style>

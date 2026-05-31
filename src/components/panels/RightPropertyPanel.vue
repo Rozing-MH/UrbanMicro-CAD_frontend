@@ -1,21 +1,26 @@
 <template>
   <aside class="right-panel" :class="{ collapsed: !editor.panelState.rightPanelOpen }">
     <div class="panel-tabs">
-      <button class="collapse-btn" @click="toggleCollapse">›</button>
+      <button class="collapse-btn" @click="toggleCollapse" title="收起面板">
+        <ChevronRightIcon :size="14" />
+      </button>
       <button
         v-for="tab in tabs"
         :key="tab.id"
         class="tab-btn"
         :class="{ active: editor.panelState.propertiesTab === tab.id }"
+        :title="tab.title"
         @click="editor.setPanelState({ propertiesTab: tab.id })"
       >
-        {{ tab.label }}
+        <component :is="tab.icon" :size="13" />
+        <span class="tab-label">{{ tab.label }}</span>
       </button>
     </div>
 
     <div class="panel-body">
       <div v-if="!selectedSegment && !selectedNode && !selectedLight" class="placeholder">
-        请在视口中选择一个对象
+        <MousePointerClickIcon :size="24" />
+        <span>请在视口中选择一个对象</span>
       </div>
 
       <section v-else-if="selectedSegment" class="prop-group">
@@ -106,8 +111,7 @@
         <ul v-if="segmentConnectors.length" class="connector-list">
           <li v-for="conn in segmentConnectors" :key="conn.id" class="connector-row">
             <span class="mono">{{ laneLabel(conn.fromLaneId) }} → {{ laneLabel(conn.toLaneId) }}</span>
-            <button class="conn-delete" @click="removeConnector(conn.id)">✕</button>
-          </li>
+            <button class="conn-delete" title="删除连接" @click="removeConnector(conn.id)"><XIcon :size="12" /></button>          </li>
         </ul>
         <p v-else class="no-connectors">暂无连接器</p>
 
@@ -116,14 +120,14 @@
           <li v-for="arrow in segmentArrows" :key="`${arrow.nodeId}:${arrow.laneId}`" class="arrow-row">
             <span class="mono">{{ laneLabel(arrow.laneId) }}</span>
             <span class="arrow-dirs">{{ arrow.allowedDirections.map(arrowDirectionLabel).join('、') }}</span>
-            <button class="conn-delete" @click="removeArrow(arrow.nodeId, arrow.laneId)">✕</button>
+            <button class="conn-delete" title="删除箭头" @click="removeArrow(arrow.nodeId, arrow.laneId)"><XIcon :size="12" /></button>
           </li>
         </ul>
         <p v-else class="no-connectors">暂无箭头</p>
 
         <div class="prop-actions">
-          <button class="primary-btn" @click="applyActiveProfile">应用当前断面</button>
-          <button class="danger-btn" @click="deleteSelected">删除该路段</button>
+          <button class="primary-btn" @click="applyActiveProfile"><ArrowUpIcon :size="14" /> 应用当前断面</button>
+          <button class="danger-btn" @click="deleteSelected"><Trash2Icon :size="14" /> 删除该路段</button>
         </div>
       </section>
 
@@ -164,7 +168,7 @@
         <ul v-if="nodeTurnRestrictions.length" class="connector-list">
           <li v-for="tr in nodeTurnRestrictions" :key="`${tr.fromSegmentId}:${tr.toSegmentId}:${tr.restriction}`" class="connector-row">
             <span class="mono">{{ segShort(tr.fromSegmentId) }} → {{ segShort(tr.toSegmentId) }}: {{ restrictionLabel(tr.restriction) }}</span>
-            <button class="conn-delete" @click="removeTurnRestriction(tr)">✕</button>
+            <button class="conn-delete" title="删除限制" @click="removeTurnRestriction(tr)"><XIcon :size="12" /></button>
           </li>
         </ul>
         <p v-else class="no-connectors">暂无转向限制</p>
@@ -203,7 +207,10 @@
             class="val-item"
             :class="issue.severity"
           >
-            <span class="val-severity">{{ issue.severity === 'error' ? '✗' : '⚠' }}</span>
+            <span class="val-severity">
+              <CircleXIcon v-if="issue.severity === 'error'" :size="12" />
+              <TriangleAlertIcon v-else :size="12" />
+            </span>
             <span class="val-msg">{{ issue.message }}</span>
           </li>
         </ul>
@@ -285,7 +292,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type Component } from 'vue'
+import {
+  ChevronRightIcon,
+  MousePointerClickIcon,
+  XIcon,
+  CircleXIcon,
+  TriangleAlertIcon,
+  RulerIcon,
+  ShieldIcon,
+  BarChart3Icon,
+  ScrollTextIcon,
+  Trash2Icon,
+  ArrowUpIcon,
+} from '@lucide/vue'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
@@ -316,12 +336,12 @@ const road = useRoadNetworkStore()
 const rules = useTrafficRuleStore()
 const { lastResult: valResult, runValidation } = useRuleValidation()
 
-interface TabDef { id: string; label: string }
+interface TabDef { id: string; icon: Component; label: string; title: string }
 const tabs: TabDef[] = [
-  { id: 'geometry', label: '几何' },
-  { id: 'rules', label: '规则' },
-  { id: 'evaluation', label: '评估' },
-  { id: 'validation', label: '验证' },
+  { id: 'geometry',    icon: RulerIcon,      label: '几何', title: '几何属性' },
+  { id: 'rules',       icon: ScrollTextIcon, label: '规则', title: '交通规则' },
+  { id: 'evaluation',  icon: BarChart3Icon,  label: '评估', title: '评估指标' },
+  { id: 'validation',  icon: ShieldIcon,     label: '验证', title: '规则校验' },
 ]
 
 const selectedSegment = computed<RoadSegment | null>(() => {
@@ -697,11 +717,23 @@ function onRunValidation(): void {
 }
 .right-panel.collapsed { width: 0; border-left: none; }
 .panel-tabs { display: flex; align-items: center; height: 36px; background: #181b21; border-bottom: 1px solid #14171c; }
-.collapse-btn { width: 28px; height: 100%; background: transparent; border: none; color: #8e94a0; cursor: pointer; }
-.tab-btn { flex: 1; padding: 8px 0; background: transparent; border: none; color: #8e94a0; cursor: pointer; font-size: 12px; }
+.collapse-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 100%; background: transparent; border: none;
+  color: #8e94a0; cursor: pointer; padding: 0;
+}
+.tab-btn {
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+  flex: 1; padding: 8px 0; background: transparent; border: none;
+  color: #8e94a0; cursor: pointer; font-size: 12px;
+}
 .tab-btn.active { color: #fff; border-bottom: 2px solid #4a8cd0; }
+.tab-label { font-size: 11px; }
 .panel-body { flex: 1; overflow-y: auto; padding: 12px; }
-.placeholder { padding: 24px 12px; color: #6a7180; text-align: center; font-size: 12px; }
+.placeholder {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 24px 12px; color: #6a7180; text-align: center; font-size: 12px;
+}
 .prop-group + .prop-group { margin-top: 16px; }
 .prop-title { font-size: 13px; font-weight: 600; color: #6cb6ff; margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid #2a2f3a; }
 .sub-title { font-size: 12px; color: #aab2bf; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -737,6 +769,7 @@ function onRunValidation(): void {
 .prop-actions { margin-top: 16px; display: grid; gap: 8px; }
 .primary-btn,
 .danger-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   width: 100%; padding: 6px;
   color: #fff; border: none; border-radius: 4px;
   cursor: pointer; font-size: 12px;
@@ -748,7 +781,11 @@ function onRunValidation(): void {
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; color: #aab2bf; }
 .connector-list { list-style: none; padding: 0; margin: 0; }
 .connector-row { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; font-size: 11px; border-bottom: 1px dashed #2a2f3a; }
-.conn-delete { background: transparent; border: none; color: #a13c3c; cursor: pointer; font-size: 12px; padding: 0 4px; }
+.conn-delete {
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: #a13c3c; cursor: pointer;
+  padding: 0 4px;
+}
 .conn-delete:hover { color: #e05050; }
 .no-connectors { font-size: 11px; color: #6a7180; margin: 4px 0; }
 .arrow-list { list-style: none; padding: 0; margin: 0; }
@@ -764,7 +801,7 @@ function onRunValidation(): void {
 .val-item { display: flex; align-items: flex-start; gap: 6px; padding: 5px 0; font-size: 11px; border-bottom: 1px dashed #2a2f3a; }
 .val-item.error .val-severity { color: #a13c3c; }
 .val-item.warning .val-severity { color: #e3a857; }
-.val-severity { flex-shrink: 0; width: 14px; text-align: center; font-size: 12px; }
+.val-severity { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 14px; }
 .val-msg { color: #d8dde6; line-height: 1.4; }
 .los-grade-inline {
   font-family: ui-monospace, Menlo, Consolas, monospace;

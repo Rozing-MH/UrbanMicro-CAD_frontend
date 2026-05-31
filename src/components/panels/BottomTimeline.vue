@@ -1,14 +1,23 @@
 <template>
   <footer class="bottom-timeline" :class="{ collapsed: !editor.panelState.bottomPanelOpen }">
     <div class="timeline-header">
-      <button class="collapse-btn" @click="toggleCollapse">{{ editor.panelState.bottomPanelOpen ? '▼' : '▲' }}</button>
-      <div class="title">仿真控制</div>
+      <button class="collapse-btn" @click="toggleCollapse">
+        <ChevronDownIcon v-if="editor.panelState.bottomPanelOpen" :size="14" />
+        <ChevronUpIcon v-else :size="14" />
+      </button>
+      <div class="title"><ActivityIcon :size="14" /> 仿真控制</div>
       <div class="state-badge" :class="stateClass">{{ stateLabel }}</div>
 
       <div class="controls">
-        <button class="ctrl-btn" :disabled="sim.state === 'RUNNING'" @click="onPlay">▶</button>
-        <button class="ctrl-btn" :disabled="sim.state !== 'RUNNING'" @click="onPause">❚❚</button>
-        <button class="ctrl-btn" @click="onReset">⟲</button>
+        <button class="ctrl-btn" :disabled="sim.state === 'RUNNING'" title="开始仿真" @click="onPlay">
+          <PlayIcon :size="14" />
+        </button>
+        <button class="ctrl-btn" :disabled="sim.state !== 'RUNNING'" title="暂停仿真" @click="onPause">
+          <PauseIcon :size="14" />
+        </button>
+        <button class="ctrl-btn" title="重置仿真" @click="onReset">
+          <RotateCcwIcon :size="14" />
+        </button>
       </div>
 
       <div class="speed-control">
@@ -23,12 +32,24 @@
       </div>
 
       <div class="view-switch">
-        <button class="view-btn" :class="{ active: evalStore.evalMode === 'DENSITY' }" @click="setEvalDensity">流量</button>
-        <button class="view-btn" :class="{ active: evalStore.evalMode === 'SPEED' }" @click="setEvalSpeed">速度</button>
-        <button class="view-btn" :class="{ active: evalStore.evalMode === 'DELAY' }" @click="setEvalDelay">延误</button>
-        <button class="view-btn" :class="{ active: evalStore.evalMode === 'LOS' }" @click="setEvalLOS">LOS</button>
-        <button class="view-btn" :class="{ active: evalStore.flightLineVisible }" @click="evalStore.toggleFlightLines()">飞线</button>
-        <button class="view-btn" :class="{ active: evalStore.evalMode === 'NONE' }" @click="setHiddenView">隐藏</button>
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'DENSITY' }" @click="setEvalDensity">
+          <BarChart3Icon :size="13" /> 流量
+        </button>
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'SPEED' }" @click="setEvalSpeed">
+          <GaugeIcon :size="13" /> 速度
+        </button>
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'DELAY' }" @click="setEvalDelay">
+          <ClockIcon :size="13" /> 延误
+        </button>
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'LOS' }" @click="setEvalLOS">
+          <SignalIcon :size="13" /> LOS
+        </button>
+        <button class="view-btn" :class="{ active: evalStore.flightLineVisible }" @click="evalStore.toggleFlightLines()">
+          <NavigationIcon :size="13" /> 飞线
+        </button>
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'NONE' }" @click="setHiddenView">
+          <EyeOffIcon :size="13" /> 隐藏
+        </button>
       </div>
 
       <div class="time-display">
@@ -46,27 +67,27 @@
 
     <div v-show="editor.panelState.bottomPanelOpen" class="stats-row">
       <div class="stat">
-        <div class="stat-label">在线车辆</div>
+        <div class="stat-label"><CarIcon :size="12" /> 在线车辆</div>
         <div class="stat-value">{{ sim.vehicleCount }}</div>
       </div>
       <div class="stat">
-        <div class="stat-label">已完成</div>
+        <div class="stat-label"><CheckCircleIcon :size="12" /> 已完成</div>
         <div class="stat-value">{{ sim.stats.completedVehicles }}</div>
       </div>
       <div class="stat">
-        <div class="stat-label">平均车速 (m/s)</div>
+        <div class="stat-label"><GaugeIcon :size="12" /> 平均车速 (m/s)</div>
         <div class="stat-value">{{ sim.stats.averageSpeed.toFixed(2) }}</div>
       </div>
       <div class="stat">
-        <div class="stat-label">平均延误 (s)</div>
+        <div class="stat-label"><ClockIcon :size="12" /> 平均延误 (s)</div>
         <div class="stat-value">{{ sim.stats.averageDelay.toFixed(1) }}</div>
       </div>
       <div class="stat">
-        <div class="stat-label">最大排队</div>
+        <div class="stat-label"><UsersIcon :size="12" /> 最大排队</div>
         <div class="stat-value">{{ sim.stats.maxQueueLength }}</div>
       </div>
       <div class="stat">
-        <div class="stat-label">吞吐量</div>
+        <div class="stat-label"><TrendingUpIcon :size="12" /> 吞吐量</div>
         <div class="stat-value">{{ sim.stats.throughput.toFixed(0) }}</div>
       </div>
       <div v-if="evalStore.networkLOS" class="stat los">
@@ -78,13 +99,34 @@
         class="export-btn"
         title="导出评估数据 (CSV)"
         @click="evalStore.exportCSV()"
-      >⬇ CSV</button>
+      >
+        <DownloadIcon :size="13" /> CSV
+      </button>
     </div>
   </footer>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import {
+  ChevronDownIcon,
+  ChevronUpIcon,
+  ActivityIcon,
+  PlayIcon,
+  PauseIcon,
+  RotateCcwIcon,
+  BarChart3Icon,
+  GaugeIcon,
+  ClockIcon,
+  SignalIcon,
+  NavigationIcon,
+  EyeOffIcon,
+  CarIcon,
+  CheckCircleIcon,
+  UsersIcon,
+  TrendingUpIcon,
+  DownloadIcon,
+} from '@lucide/vue'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
@@ -195,8 +237,12 @@ function setHiddenView(): void {
   padding: 6px 14px; height: 36px;
   background: #181b21; border-bottom: 1px solid #14171c;
 }
-.collapse-btn { width: 24px; height: 24px; background: transparent; border: none; color: #8e94a0; cursor: pointer; font-size: 11px; }
-.title { font-size: 13px; font-weight: 600; color: #d8dde6; }
+.collapse-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; background: transparent; border: none;
+  color: #8e94a0; cursor: pointer; padding: 0;
+}
+.title { display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: #d8dde6; }
 .state-badge {
   padding: 2px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600;
@@ -207,9 +253,10 @@ function setHiddenView(): void {
 .state-badge.finished { background: #4a5160; color: #fff; }
 .controls { display: flex; gap: 4px; }
 .ctrl-btn {
+  display: flex; align-items: center; justify-content: center;
   width: 30px; height: 26px;
   background: #2a2f3a; border: 1px solid #383e4a;
-  color: #d8dde6; border-radius: 4px; cursor: pointer; font-size: 12px;
+  color: #d8dde6; border-radius: 4px; cursor: pointer; padding: 0;
 }
 .ctrl-btn:hover:not(:disabled) { background: #313847; }
 .ctrl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -220,6 +267,7 @@ function setHiddenView(): void {
 }
 .view-switch { display: flex; align-items: center; gap: 4px; }
 .view-btn {
+  display: inline-flex; align-items: center; gap: 3px;
   padding: 4px 8px;
   background: #1d2129; border: 1px solid #383e4a; color: #c8cdd5;
   border-radius: 3px; cursor: pointer; font-size: 11px;
@@ -250,7 +298,7 @@ function setHiddenView(): void {
   overflow-x: auto;
 }
 .stat { min-width: 70px; }
-.stat-label { font-size: 11px; color: #8e94a0; }
+.stat-label { display: flex; align-items: center; gap: 3px; font-size: 11px; color: #8e94a0; }
 .stat-value { font-size: 16px; font-weight: 600; color: #d8dde6; margin-top: 2px; }
 .los-grade { font-family: ui-monospace, Menlo, Consolas, monospace; padding: 1px 6px; border-radius: 3px; display: inline-block; }
 .los-grade[data-grade='A'] { background: #2ecc71; color: #fff; }
@@ -260,6 +308,7 @@ function setHiddenView(): void {
 .los-grade[data-grade='E'] { background: #e74c3c; color: #fff; }
 .los-grade[data-grade='F'] { background: #c0392b; color: #fff; }
 .export-btn {
+  display: inline-flex; align-items: center; gap: 4px;
   padding: 4px 10px; margin-left: 8px;
   background: #2a2f3a; border: 1px solid #383e4a; color: #c8cdd5;
   border-radius: 3px; cursor: pointer; font-size: 11px; white-space: nowrap;
