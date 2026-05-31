@@ -80,6 +80,7 @@ import { useNodeAdjustmentStore, type GizmoMode } from '@/stores/nodeAdjustmentS
 import { useHeatmap } from '@/composables/useHeatmap'
 import { useLOSBadges } from '@/composables/useLOSBadges'
 import { useGroundGrid } from '@/composables/useGroundGrid'
+import { useDecalRenderer } from '@/composables/useDecalRenderer'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useSimulationStore } from '@/stores/simulationStore'
@@ -159,6 +160,7 @@ const cameraRef = computed(() => renderer.state.value?.camera ?? null) as Ref<TH
 
 // Pass scene/camera refs to all dependant composables
 const roadRenderer = useRoadRenderer(sceneRef)
+const decalRenderer = useDecalRenderer(sceneRef, roadRenderer.segmentMeshes, roadRenderer.intersectionMeshes)
 const vehicleRenderer = useVehicleRenderer(sceneRef)
 const cameraControls = useCameraControls(cameraRef, containerRef)
 const nodeAdjustStore = useNodeAdjustmentStore()
@@ -415,8 +417,7 @@ const arrowPickerPosition = ref({ x: 0, y: 0 })
 const arrowPickerLaneId = ref('')
 const arrowPickerNodeId = ref('')
 const arrowPickerDirections = ref<TurnDirection[]>([])
-const laneArrowMeshes: Map<string, THREE.Sprite> = new Map()
-const arrowSpriteMaterial = new THREE.SpriteMaterial({ color: 0xffffff, opacity: 0.9 })
+// Lane arrow decals now managed by decalRenderer (replaced Sprite-based rendering)
 
 // Angle annotation state (FR1.9)
 let angleAnnotationGroup: THREE.Group | null = null
@@ -1819,65 +1820,7 @@ async function handleLaneConnector(event: MouseEvent, sessionId: HistorySessionI
   updateLaneConnectorMeshes()
 }
 
-const ARROW_ICONS: Record<TurnDirection, string> = {
-  LEFT: '↰',
-  STRAIGHT: '↑',
-  RIGHT: '↱',
-  U_TURN: '↩',
-}
-
-function makeArrowCanvas(directions: TurnDirection[]): HTMLCanvasElement {
-  const canvas = document.createElement('canvas')
-  canvas.width = 64
-  canvas.height = 64
-  const ctx = canvas.getContext('2d')!
-  ctx.clearRect(0, 0, 64, 64)
-  ctx.fillStyle = '#ffffff'
-  ctx.font = 'bold 28px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  const text = directions.map((d) => ARROW_ICONS[d]).join('')
-  ctx.fillText(text, 32, 32)
-  return canvas
-}
-
-function updateLaneArrowMeshes(): void {
-  const scene = sceneRef.value
-  if (!scene) return
-  for (const [key, sprite] of laneArrowMeshes) {
-    scene.remove(sprite)
-    sprite.material.map?.dispose()
-    sprite.material.dispose()
-    laneArrowMeshes.delete(key)
-  }
-  const isArrowTool = editorStore.activeTool === 'LANE_ARROW'
-  const activeSegmentId = roadStore.selectedSegmentIds.values().next().value as string | undefined
-  if (!isArrowTool || !activeSegmentId) return
-  const segment = roadStore.getSegment(activeSegmentId)
-  if (!segment) return
-  const anchors = getLaneAnchorPositions(activeSegmentId)
-  // Find nodes connected to this segment
-  const nodeIds = new Set<string>()
-  const startNode = roadStore.getNode(segment.startNodeId)
-  const endNode = roadStore.getNode(segment.endNodeId)
-  if (startNode) nodeIds.add(startNode.id)
-  if (endNode) nodeIds.add(endNode.id)
-  for (const anchor of anchors) {
-    for (const nodeId of nodeIds) {
-      const key = `${nodeId}:${anchor.laneId}`
-      const arrow = roadStore.laneArrows.get(key)
-      if (!arrow || arrow.allowedDirections.length === 0) continue
-      const canvas = makeArrowCanvas(arrow.allowedDirections)
-      const texture = new THREE.CanvasTexture(canvas)
-      const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.9 })
-      const sprite = new THREE.Sprite(mat)
-      sprite.position.set(anchor.point.x, anchor.elevation + 1.0, anchor.point.y)
-      sprite.scale.set(2, 2, 1)
-      scene.add(sprite)
-      laneArrowMeshes.set(key, sprite)
-    }
-  }
-}
+// ARROW_ICONS & makeArrowCanvas & updateLaneArrowMeshes removed — replaced by decalRenderer
 
 function handleLaneArrow(event: MouseEvent, _sessionId: HistorySessionId): void {
   const anchor = pickLaneAnchor(event)
@@ -1886,7 +1829,7 @@ function handleLaneArrow(event: MouseEvent, _sessionId: HistorySessionId): void 
     if (picked?.segmentId) {
       roadStore.selectSegment(picked.segmentId)
       updateLaneAnchorMeshes()
-      updateLaneArrowMeshes()
+      decalRenderer.syncAllDecals()
     }
     return
   }
@@ -1926,7 +1869,7 @@ async function onArrowPickerApply(data: {
     }),
     sessionId,
   )
-  updateLaneArrowMeshes()
+  decalRenderer.syncAllDecals()
 }
 
 function onArrowPickerCancel(): void {
@@ -2067,6 +2010,7 @@ function syncRendererWithStore(): void {
   for (const seg of roadStore.segments.values()) roadRenderer.addSegment(seg)
   for (const node of roadStore.nodes.values()) roadRenderer.addNode(node)
   updateTrafficLightRender()
+  decalRenderer.syncAllDecals()
 }
 
 function onContextMenu(event: MouseEvent): void {
@@ -2231,6 +2175,7 @@ watch(
   () => roadStore.topologyVersion,
   () => {
     syncRendererWithStore()
+    decalRenderer.syncAllDecals()
     updateAngleAnnotations()
     if (editorStore.activeTool === 'NODE_ADJUST') {
       updateNodeAdjustVisuals()
@@ -2254,7 +2199,7 @@ watch(
     if (editorStore.activeTool !== 'LANE_CONNECTOR') clearLaneConnectorState()
     if (editorStore.activeTool !== 'NODE_ADJUST') clearNodeAdjustState()
     updateLaneAnchorMeshes()
-    updateLaneArrowMeshes()
+    decalRenderer.syncAllDecals()
     updateNodeAdjustVisuals()
   },
 )
@@ -2262,6 +2207,7 @@ watch(
 watch(
   () => trafficRuleStore.ruleVersion,
   () => {
+    decalRenderer.syncAllDecals()
     updateLaneConnectorMeshes()
     updateTrafficLightRender()
   },
@@ -2432,12 +2378,7 @@ onBeforeUnmount(() => {
   nodeAdjustVertexMaterial.dispose()
   nodeAdjustSelectedVertexMaterial.dispose()
   nodeAdjustOutlineMaterial.dispose()
-  arrowSpriteMaterial.dispose()
-  for (const [, sprite] of laneArrowMeshes) {
-    sprite.material.map?.dispose()
-    sprite.material.dispose()
-  }
-  laneArrowMeshes.clear()
+  decalRenderer.dispose()
   cameraControls.detach()
   gizmoControls.dispose()
   heatmap.dispose()
