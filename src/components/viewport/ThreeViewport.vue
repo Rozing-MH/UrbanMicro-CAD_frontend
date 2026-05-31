@@ -84,7 +84,7 @@ import { useLOSBadges } from '@/composables/useLOSBadges'
 import { useGroundGrid } from '@/composables/useGroundGrid'
 import { useDecalRenderer } from '@/composables/useDecalRenderer'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
-import { useEditorStateStore } from '@/stores/editorStateStore'
+import { useEditorStateStore, type ToolMode } from '@/stores/editorStateStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
@@ -2038,6 +2038,32 @@ const RESTRICTION_LABEL_MAP: Record<string, string> = {
   NO_UTURN: '禁掉头',
 }
 
+/** Tool-switching keyboard shortcut mapping */
+const TOOL_KEY_MAP: Record<string, ToolMode> = {
+  v: 'SELECT',
+  d: 'ROAD_DRAW',
+  u: 'ROAD_UPGRADE',
+  p: 'PARALLEL_ROAD',
+  b: 'BULLDOZER',
+  e: 'ROAD_EDIT',
+  n: 'NODE_ADJUST',
+  t: 'TRAFFIC_LIGHT',
+  l: 'LANE_CONNECTOR',
+  r: 'LANE_RESTRICTION',
+  a: 'LANE_ARROW',
+  o: 'OD_MARKER',
+  m: 'MEASURE',
+  h: 'PAN',
+}
+
+/** Check if the keyboard event target is an editable element (input/textarea) */
+function isEditableTarget(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null
+  if (!target) return false
+  const tag = target.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable
+}
+
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Shift') {
     shiftHeld.value = true
@@ -2122,12 +2148,17 @@ function onKeyDown(event: KeyboardEvent): void {
     event.preventDefault()
     const nextMode: Record<DrawingMode, DrawingMode> = { STRAIGHT: 'CURVE', CURVE: 'FREE', FREE: 'STRAIGHT' }
     roadStore.setDrawingMode(nextMode[roadStore.drawingContext.mode])
-  } else if (event.key === 'p' || event.key === 'P') {
-    event.preventDefault()
-    if (editorStore.activeTool === 'PARALLEL_ROAD') {
-      editorStore.setActiveTool('SELECT')
-    } else {
-      editorStore.setActiveTool('PARALLEL_ROAD')
+  } else if (!event.ctrlKey && !event.metaKey && !event.altKey && !isEditableTarget(event)) {
+    // Tool-switching shortcuts (only when not in input/textarea)
+    const toolKey = TOOL_KEY_MAP[event.key.toLowerCase()]
+    if (toolKey) {
+      event.preventDefault()
+      // Toggle: pressing the same shortcut again returns to SELECT
+      if (editorStore.activeTool === toolKey) {
+        editorStore.setActiveTool('SELECT')
+      } else {
+        editorStore.setActiveTool(toolKey)
+      }
     }
   }
 }

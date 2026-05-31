@@ -158,6 +158,9 @@ export const useCrossSectionEditorStore = defineStore('crossSectionEditor', () =
 
     registerCrossSectionProfiles([saved])
 
+    // Notify listeners (e.g. LeftAssetPanel) to refresh template list
+    storeEventBus.emit('cross-section:template-saved', { profileId: saved.id, name: saved.name })
+
     const editorState = useEditorStateStore()
     editorState.setActiveProfile(saved.id)
 

@@ -2,8 +2,9 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { TopologyData } from '@/types/road-network'
 import type { RuleData } from '@/types/traffic-rule'
-import type { ODMatrix } from '@/types/simulation'
+import type { ODMatrix, VehicleMixConfig } from '@/types/simulation'
 import { projectApi } from '@/api/projectApi'
+import { templateApi } from '@/api/templateApi'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { useSimulationStore } from '@/stores/simulationStore'
@@ -340,6 +341,44 @@ export const useProjectStore = defineStore('project', () => {
     markDirty()
   }
 
+  /**
+   * 从模板一键加载到当前工程。
+   * 对齐设计文档 FR5：样例库一键加载
+   * 获取模板的 snapshotData，通过 SceneSerializer 反序列化后恢复到各 Store。
+   */
+  async function loadFromTemplate(templateId: string): Promise<void> {
+    const template = await templateApi.getTemplate(templateId)
+    if (!template) throw new Error('模板不存在')
+
+    const snapshot = template.snapshotData as
+      | { topologyData?: TopologyData; ruleData?: RuleData }
+      | undefined
+
+    if (!snapshot?.topologyData) {
+      throw new Error('模板缺少拓扑数据')
+    }
+
+    const payload: ProjectPayload = {
+      topologyData: snapshot.topologyData,
+      ruleData: snapshot.ruleData ?? { ruleSets: [], odConfig: { pairs: [], vehicleMix: { ratios: [{ type: 'CAR', ratio: 0.82 }, { type: 'BUS', ratio: 0.06 }, { type: 'TRUCK', ratio: 0.08 }, { type: 'BIKE', ratio: 0.04 }, { type: 'TRAM', ratio: 0 }] } as VehicleMixConfig } },
+      version: snapshot.topologyData.version,
+    }
+
+    const result = serializer.deserialize(payload)
+    applySceneResult(result)
+    resetHistoryAfterRestore()
+
+    // 更新项目元数据
+    if (currentProject.value) {
+      updateProjectMeta({
+        name: `${template.name} - ${currentProject.value.name}`,
+        description: `从模板「${template.name}」加载`,
+      })
+    }
+
+    markDirty()
+  }
+
   function clearSnapshots(): void {
     snapshots.value = []
     snapshotsTotal.value = 0
@@ -351,6 +390,6 @@ export const useProjectStore = defineStore('project', () => {
     setCurrentProject, markDirty, markSaved, setProjectList, setLoadingList, updateProjectMeta,
     loadProject, saveProject,
     fetchSnapshots, loadSnapshot, clearSnapshots,
-    exportToJson, importFromJson,
+    exportToJson, importFromJson, loadFromTemplate,
   }
 })

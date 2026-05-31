@@ -23,6 +23,7 @@ export interface StoreEventMap {
   'traffic-rule:validation-requested': {}
   // --- cross-section ---
   'cross-section:profile-changed': { profileId: string; segmentId?: string }
+  'cross-section:template-saved': { profileId: string; name: string }
   // --- simulation ---
   'simulation:state-changed': { running: boolean }
   'simulation:started': {}

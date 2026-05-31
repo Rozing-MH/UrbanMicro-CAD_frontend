@@ -64,4 +64,26 @@ export const templateApi = {
       return res.data.data ?? []
     }
   },
+
+  /** Load a full template by ID (includes snapshotData for scene loading) */
+  async getTemplate(id: string): Promise<TemplateDTO | null> {
+    try {
+      const res = await apiClient.get<ApiResponse<TemplateDTO>>(`/templates/${id}`)
+      return res.data.data ?? null
+    } catch {
+      return null
+    }
+  },
+
+  /** List distinct asset categories available in the template store */
+  async listCategories(): Promise<string[]> {
+    try {
+      const res = await apiClient.get<ApiResponse<TemplateDTO[]>>('/templates')
+      const items = res.data.data ?? []
+      const cats = new Set(items.map((t) => t.category).filter(Boolean))
+      return [...cats]
+    } catch {
+      return []
+    }
+  },
 }

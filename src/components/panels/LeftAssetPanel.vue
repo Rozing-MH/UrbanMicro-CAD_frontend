@@ -70,6 +70,13 @@
     </div>
 
     <div v-else-if="activeTab === 'assets'" class="panel-content">
+      <!-- Category filter -->
+      <div v-if="assetCategories.length > 1" class="category-filter">
+        <select v-model="selectedCategory" class="category-select">
+          <option value="">全部分类</option>
+          <option v-for="cat in assetCategories" :key="cat" :value="cat">{{ cat }}</option>
+        </select>
+      </div>
       <div v-if="loadingAssets" class="placeholder">
         <LoaderIcon :size="20" class="spin" />
         <span>加载中…</span>
@@ -81,7 +88,13 @@
       <ul v-else class="asset-grid">
         <li v-for="a in filteredAssets" :key="a.id" class="asset-card" draggable="true" @dragstart="onAssetDrag($event, a.id)">
           <div class="asset-card-thumb">{{ a.category[0]?.toUpperCase() ?? '?' }}</div>
-          <div class="asset-card-name">{{ a.name }}</div>
+          <div class="asset-card-info">
+            <div class="asset-card-name">{{ a.name }}</div>
+            <div class="asset-card-meta">{{ a.category }}</div>
+          </div>
+          <button class="asset-load-btn" title="加载到当前工程" @click.stop="onLoadAsset(a.id, a.name)">
+            <PlusIcon :size="14" />
+          </button>
         </li>
       </ul>
     </div>
@@ -137,7 +150,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, type Component } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, type Component } from 'vue'
 import {
   ChevronLeftIcon,
   ChevronUpIcon,
@@ -160,6 +173,8 @@ import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { useCrossSectionEditorStore } from '@/stores/crossSectionEditorStore'
 import { templateApi } from '@/api/templateApi'
+import { storeEventBus } from '@/stores/storeEventBus'
+import { useProjectStore } from '@/stores/projectStore'
 import { registerCrossSectionProfiles, getProfileById } from '@/utils/roadProfiles'
 import type { CrossSectionProfile, LaneDef } from '@/types/road-network'
 import CrossSectionEditor from './CrossSectionEditor.vue'
@@ -185,6 +200,8 @@ const profiles = ref<CrossSectionProfile[]>([])
 const loading = ref(false)
 const assets = ref<Array<{ id: string; name: string; category: string; thumbnail: string }>>([])
 const loadingAssets = ref(false)
+const assetCategories = ref<string[]>([])
+const selectedCategory = ref('')
 
 const defaultProfiles: CrossSectionProfile[] = [
   {
@@ -236,8 +253,11 @@ const filteredProfiles = computed(() => {
 
 const filteredAssets = computed(() => {
   const q = search.value.trim().toLowerCase()
-  if (!q) return assets.value
-  return assets.value.filter(a => a.name.toLowerCase().includes(q))
+  return assets.value.filter(a => {
+    const matchSearch = !q || a.name.toLowerCase().includes(q)
+    const matchCategory = !selectedCategory.value || a.category === selectedCategory.value
+    return matchSearch && matchCategory
+  })
 })
 
 function laneStyle(lane: LaneDef): Record<string, string> {
@@ -275,6 +295,19 @@ function onAssetDrag(ev: DragEvent, id: string): void {
   ev.dataTransfer?.setData('application/x-asset', id)
 }
 
+const projectStore = useProjectStore()
+
+async function onLoadAsset(templateId: string, templateName: string): Promise<void> {
+  const confirmed = window.confirm(`加载模板「${templateName}」将替换当前场景，未保存的修改将丢失。是否继续？`)
+  if (!confirmed) return
+  try {
+    await projectStore.loadFromTemplate(templateId)
+    editor.showNotification({ type: 'success', message: `已加载模板「${templateName}」` })
+  } catch (err) {
+    editor.showNotification({ type: 'error', message: err instanceof Error ? err.message : '模板加载失败' })
+  }
+}
+
 function toggleCollapse(): void {
   editor.setPanelState({ leftPanelOpen: !editor.panelState.leftPanelOpen })
 }
@@ -300,6 +333,22 @@ function onMOBILChange(field: keyof MOBILParams, ev: Event): void {
   sim.setMOBILParams({ [field]: eventNumber(ev) } as Partial<MOBILParams>)
 }
 
+async function refreshProfiles(): Promise<void> {
+  try {
+    const list = await templateApi.listCrossSections()
+    if (list.length > 0) {
+      profiles.value = list
+      registerCrossSectionProfiles(list)
+    }
+  } catch {
+    // keep existing profiles on refresh failure
+  }
+}
+
+function onTemplateSaved(): void {
+  void refreshProfiles()
+}
+
 onMounted(async () => {
   loading.value = true
   try {
@@ -319,6 +368,17 @@ onMounted(async () => {
   } finally {
     loadingAssets.value = false
   }
+
+  // Extract distinct categories from loaded assets
+  const cats = new Set(assets.value.map(a => a.category).filter(Boolean))
+  assetCategories.value = [...cats]
+
+  // Subscribe to template-saved events to auto-refresh the list
+  storeEventBus.on('cross-section:template-saved', onTemplateSaved)
+})
+
+onBeforeUnmount(() => {
+  storeEventBus.off('cross-section:template-saved', onTemplateSaved)
 })
 </script>
 
@@ -401,10 +461,18 @@ onMounted(async () => {
 .asset-name { font-size: 13px; font-weight: 600; }
 .asset-meta { font-size: 11px; color: #8e94a0; }
 .asset-grid { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.asset-card { background: #262b35; border-radius: 5px; padding: 8px; text-align: center; cursor: pointer; }
+.asset-card { background: #262b35; border-radius: 5px; padding: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px; position: relative; }
 .asset-card:hover { background: #313847; }
-.asset-card-thumb { width: 100%; height: 50px; background: #1a1d24; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #6cb6ff; font-weight: 700; }
-.asset-card-name { margin-top: 6px; font-size: 11px; }
+.asset-card-thumb { width: 36px; height: 36px; min-width: 36px; background: #1a1d24; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #6cb6ff; font-weight: 700; font-size: 14px; }
+.asset-card-info { flex: 1; min-width: 0; }
+.asset-card-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.asset-card-meta { font-size: 10px; color: #8892a4; margin-top: 2px; }
+.asset-load-btn { background: none; border: 1px solid #3d4455; border-radius: 4px; color: #6cb6ff; cursor: pointer; padding: 3px 5px; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.15s; }
+.asset-card:hover .asset-load-btn { opacity: 1; }
+.asset-load-btn:hover { background: #2d3548; border-color: #6cb6ff; }
+.category-filter { margin-bottom: 8px; }
+.category-select { width: 100%; background: #262b35; color: #c8cdd5; border: 1px solid #3d4455; border-radius: 4px; padding: 5px 8px; font-size: 12px; outline: none; }
+.category-select:focus { border-color: #6cb6ff; }
 .layer-list { list-style: none; padding: 0; margin: 0; }
 .layer-row { padding: 6px 4px; font-size: 13px; }
 .layer-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
