@@ -892,3 +892,59 @@ export class SetCrosswalkCommand implements ICommand {
     return `Set crosswalk ${this.crosswalk.id} active=${this.crosswalk.isActive}`
   }
 }
+
+// ============================================================
+// BatchDeleteCommand — 批量删除路段/节点，支持撤销/重做
+// ============================================================
+
+export class BatchDeleteCommand implements ICommand {
+  readonly timestamp = Date.now()
+  private snapshots: Array<{
+    segment: RoadSegment
+    startNode: RoadNode
+    endNode: RoadNode
+    lanes: Lane[]
+    rules: RuleSnapshot
+  }> = []
+
+  constructor(private segmentIds: string[]) {}
+
+  execute(): void {
+    const store = useRoadNetworkStore()
+    this.snapshots = []
+    for (const segId of this.segmentIds) {
+      const seg = store.getSegment(segId)
+      if (!seg) continue
+      const startNode = store.getNode(seg.startNodeId)
+      const endNode = store.getNode(seg.endNodeId)
+      if (!startNode || !endNode) continue
+      const lanes = store.getLanesBySegment(segId).map((lane) => ({ ...lane }))
+      const laneIds = new Set(lanes.map((lane) => lane.id))
+      const rules = captureRulesForLaneIds(laneIds, new Set([segId]))
+      this.snapshots.push({
+        segment: cloneSegment(seg),
+        startNode: cloneNode(startNode),
+        endNode: cloneNode(endNode),
+        lanes,
+        rules,
+      })
+      removeRuleSnapshot(rules)
+      store.removeSegment(segId)
+    }
+  }
+
+  undo(): void {
+    const store = useRoadNetworkStore()
+    for (const snap of this.snapshots) {
+      if (!store.getNode(snap.startNode.id)) store.addNode(snap.startNode)
+      if (!store.getNode(snap.endNode.id)) store.addNode(snap.endNode)
+      store.addSegment(cloneSegment(snap.segment))
+      for (const lane of snap.lanes) store.addLane({ ...lane })
+      restoreRuleSnapshot(snap.rules)
+    }
+  }
+
+  getDescription(): string {
+    return `Batch delete ${this.segmentIds.length} segments`
+  }
+}

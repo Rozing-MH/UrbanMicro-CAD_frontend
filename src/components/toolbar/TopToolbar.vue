@@ -117,7 +117,7 @@ const toolList: ToolDef[] = [
   { id: 'SELECT',          icon: '⬚', label: '选择',   title: '选择工具' },
   { id: 'ROAD_DRAW',       icon: '✎', label: '画路',   title: '绘制道路' },
   { id: 'ROAD_UPGRADE',    icon: '⇧', label: '升级',   title: '道路升级刷' },
-  { id: 'PARALLEL_ROAD',   icon: '∥', label: '平行',   title: '平行路' },
+  { id: 'PARALLEL_ROAD',   icon: '∥', label: '平行',   title: '平行路 (P)' },
   { id: 'BULLDOZER',       icon: '⌫', label: '删除',   title: '推土机' },
   { id: 'ROAD_EDIT',       icon: '◆', label: '编辑',   title: '编辑节点' },
   { id: 'NODE_ADJUST',     icon: '⬡', label: '边界',   title: '路口边界编辑' },

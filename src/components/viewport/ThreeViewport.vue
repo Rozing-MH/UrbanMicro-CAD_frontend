@@ -51,6 +51,20 @@
         </div>
       </div>
     </Teleport>
+    <!-- Box selection overlay for BULLDOZER batch delete -->
+    <div
+      v-if="boxSelectActive && boxSelectStart && boxSelectEnd"
+      class="box-select-rect"
+      :style="{
+        left: Math.min(boxSelectStart.x, boxSelectEnd.x) + 'px',
+        top: Math.min(boxSelectStart.y, boxSelectEnd.y) + 'px',
+        width: Math.abs(boxSelectEnd.x - boxSelectStart.x) + 'px',
+        height: Math.abs(boxSelectEnd.y - boxSelectStart.y) + 'px',
+      }"
+    />
+    <div v-if="boxSelectActive && boxSelectedSegmentIds.size > 0" class="box-select-info">
+      已选中 {{ boxSelectedSegmentIds.size }} 条路段
+    </div>
   </div>
 </template>
 
@@ -84,6 +98,7 @@ import {
   SetLaneConnectorCommand,
   SetTurnRestrictionCommand,
   UpgradeSegmentCommand,
+  BatchDeleteCommand,
 } from '@/commands/roadCommands'
 import { buildSegmentGeometry, createSegmentFromPoints, rebuildCurvedCenterLine } from '@/utils/roadGeometry'
 import { getProfileById } from '@/utils/roadProfiles'
@@ -184,7 +199,7 @@ const hint = computed(() => {
     }
     case 'ROAD_UPGRADE': return '点击路段，使用左侧当前断面原位升级'
     case 'PARALLEL_ROAD': return '点击路段，按当前断面宽度生成平行路'
-    case 'BULLDOZER': return '点击路段删除，支持撤销/重做'
+    case 'BULLDOZER': return '点击删除路段，或拖拽框选批量删除'
     case 'ROAD_EDIT': return '左键选择节点拖动调整'
     case 'NODE_ADJUST': return isDraggingVertex.value ? '拖拽顶点调整边界，Esc 取消' : '点击选择路口，拖拽顶点调整边界形状'
     case 'TRAFFIC_LIGHT': return '点击交叉口添加信号灯'
@@ -350,6 +365,12 @@ const isDraggingVertex = ref(false)
 const dragVertexNodeId = ref<string | null>(null)
 const dragVertexIndex = ref<number>(-1)
 const dragVertexStartPos = ref<Point2D | null>(null)
+
+// Box selection state (BULLDOZER batch delete)
+const boxSelectActive = ref(false)
+const boxSelectStart = ref<{ x: number; y: number } | null>(null)
+const boxSelectEnd = ref<{ x: number; y: number } | null>(null)
+const boxSelectedSegmentIds = ref<Set<string>>(new Set())
 
 // Gizmo drag tracking — commit MoveNodeCommand on drag end
 const gizmoDragNodeId = ref<string | null>(null)
@@ -1210,6 +1231,38 @@ function clearPreview(): void {
 function onPointerMove(event: MouseEvent): void {
   const world = screenToWorld(event)
   if (!world) return
+  // Box selection drag for BULLDOZER batch delete
+  if (boxSelectActive.value && boxSelectStart.value) {
+    boxSelectEnd.value = { x: event.clientX, y: event.clientY }
+    // Compute which segments are inside the box
+    const x1 = Math.min(boxSelectStart.value.x, boxSelectEnd.value.x)
+    const y1 = Math.min(boxSelectStart.value.y, boxSelectEnd.value.y)
+    const x2 = Math.max(boxSelectStart.value.x, boxSelectEnd.value.x)
+    const y2 = Math.max(boxSelectStart.value.y, boxSelectEnd.value.y)
+    const cam = cameraRef.value
+    const canvas = renderer.state.value?.renderer?.domElement
+    if (!cam || !canvas) return
+    const w = canvas.clientWidth
+    const h = canvas.clientHeight
+    const selected = new Set<string>()
+    for (const seg of roadStore.segments.values()) {
+      const startNode = roadStore.getNode(seg.startNodeId)
+      const endNode = roadStore.getNode(seg.endNodeId)
+      if (!startNode || !endNode) continue
+      // Project segment midpoint to screen
+      const midX = (startNode.position.x + endNode.position.x) / 2
+      const midY = (startNode.position.y + endNode.position.y) / 2
+      const midZ = (startNode.elevation + endNode.elevation) / 2
+      const v = new THREE.Vector3(midX, midZ, midY).project(cam)
+      const sx = (v.x * 0.5 + 0.5) * w + canvas.getBoundingClientRect().left
+      const sy = (-v.y * 0.5 + 0.5) * h + canvas.getBoundingClientRect().top
+      if (sx >= x1 && sx <= x2 && sy >= y1 && sy <= y2) {
+        selected.add(seg.id)
+      }
+    }
+    boxSelectedSegmentIds.value = selected
+    return
+  }
   if (isDragging.value && dragNodeId.value) {
     roadStore.updateNode(dragNodeId.value, { position: { x: world.x, y: world.y } })
     rebuildSegmentsForNode(dragNodeId.value)
@@ -1474,6 +1527,37 @@ function rebuildSegmentsForNode(nodeId: string): void {
 }
 
 function onPointerUp(): void {
+  // Box selection for BULLDOZER batch delete
+  if (boxSelectActive.value && boxSelectStart.value && boxSelectEnd.value) {
+    const dx = Math.abs(boxSelectEnd.value.x - boxSelectStart.value.x)
+    const dy = Math.abs(boxSelectEnd.value.y - boxSelectStart.value.y)
+    const sessionId = editorStore.historySessionId
+
+    if (dx < 5 && dy < 5) {
+      // Click (not drag) — single delete via pickSceneObject
+      if (sessionId !== null) {
+        const fakeEvent = { clientX: boxSelectStart.value.x, clientY: boxSelectStart.value.y } as MouseEvent
+        void handleBulldozer(fakeEvent, sessionId)
+      }
+    } else if (boxSelectedSegmentIds.value.size > 0 && sessionId !== null) {
+      // Drag — batch delete
+      const ids = Array.from(boxSelectedSegmentIds.value)
+      void executeHistoryCommand(new BatchDeleteCommand(ids), sessionId)
+        .then(() => {
+          editorStore.showNotification({
+            type: 'info',
+            message: `已批量删除 ${ids.length} 条路段`,
+            durationMs: 3000,
+          })
+          syncRendererWithStore()
+        })
+    }
+    boxSelectActive.value = false
+    boxSelectStart.value = null
+    boxSelectEnd.value = null
+    boxSelectedSegmentIds.value = new Set()
+    return
+  }
   // Node adjust vertex drag commit
   if (isDraggingVertex.value) {
     const nodeId = dragVertexNodeId.value
@@ -1873,6 +1957,39 @@ async function onTurnRestrictionApply(): Promise<void> {
   trPickerVisible.value = false
   const sessionId = editorStore.historySessionId
   if (sessionId === null) return
+
+  // Check for conflicts with existing lane connectors
+  if (trPickerRestriction.value !== 'NONE') {
+    const fromSegId = trPickerFromSegId.value
+    const toSegId = trPickerToSegId.value
+    const nodeId = trPickerNodeId.value
+    const conflictingConnectors: string[] = []
+    for (const c of trafficRuleStore.laneConnectors.values()) {
+      const cFromSegId = c.fromLaneId.includes(':lane:') ? c.fromLaneId.split(':lane:')[0] : c.fromLaneId
+      const cToSegId = c.toLaneId.includes(':lane:') ? c.toLaneId.split(':lane:')[0] : c.toLaneId
+      if (cFromSegId !== fromSegId || cToSegId !== toSegId) continue
+      const fromSeg = roadStore.getSegment(fromSegId)
+      const toSeg = roadStore.getSegment(toSegId)
+      if (!fromSeg || !toSeg) continue
+      const shared = fromSeg.startNodeId === toSeg.startNodeId || fromSeg.startNodeId === toSeg.endNodeId
+        ? fromSeg.startNodeId
+        : fromSeg.endNodeId === toSeg.startNodeId || fromSeg.endNodeId === toSeg.endNodeId
+          ? fromSeg.endNodeId
+          : null
+      if (shared === nodeId) {
+        conflictingConnectors.push(c.id)
+      }
+    }
+    if (conflictingConnectors.length > 0) {
+      const label = RESTRICTION_LABEL_MAP[trPickerRestriction.value] ?? trPickerRestriction.value
+      editorStore.showNotification({
+        type: 'warning',
+        message: `转向限制与 ${conflictingConnectors.length} 条车道连接器冲突（${fromSegId.slice(0, 6)}…→${toSegId.slice(0, 6)}… 已设为${label}），请使用"检查规则"查看详情`,
+        durationMs: 5000,
+      })
+    }
+  }
+
   await executeHistoryCommand(
     new SetTurnRestrictionCommand({
       nodeId: trPickerNodeId.value,
@@ -1924,7 +2041,13 @@ async function onPointerDown(event: MouseEvent): Promise<void> {
   else if (editorStore.activeTool === 'SELECT') handleSelect(event)
   else if (editorStore.activeTool === 'ROAD_UPGRADE') await handleRoadUpgrade(event, sessionId)
   else if (editorStore.activeTool === 'PARALLEL_ROAD') await handleParallelRoad(event, sessionId)
-  else if (editorStore.activeTool === 'BULLDOZER') await handleBulldozer(event, sessionId)
+  else if (editorStore.activeTool === 'BULLDOZER') {
+    // Start box selection for batch delete
+    boxSelectStart.value = { x: event.clientX, y: event.clientY }
+    boxSelectEnd.value = { x: event.clientX, y: event.clientY }
+    boxSelectActive.value = true
+    boxSelectedSegmentIds.value = new Set()
+  }
   else if (editorStore.activeTool === 'TRAFFIC_LIGHT') await handleTrafficLight(event, sessionId)
   else if (editorStore.activeTool === 'LANE_CONNECTOR') await handleLaneConnector(event, sessionId)
   else if (editorStore.activeTool === 'LANE_ARROW') handleLaneArrow(event, sessionId)
@@ -1954,9 +2077,19 @@ function onContextMenu(event: MouseEvent): void {
   clearLaneConnectorState()
   clearMeasureState()
   clearNodeAdjustState()
+  boxSelectActive.value = false
+  boxSelectStart.value = null
+  boxSelectEnd.value = null
+  boxSelectedSegmentIds.value = new Set()
 }
 
 const ELEVATION_STEP = 1
+const RESTRICTION_LABEL_MAP: Record<string, string> = {
+  NO_LEFT: '禁左',
+  NO_RIGHT: '禁右',
+  NO_STRAIGHT: '禁直',
+  NO_UTURN: '禁掉头',
+}
 
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Shift') {
@@ -1995,6 +2128,10 @@ function onKeyDown(event: KeyboardEvent): void {
     clearMeasureState()
     arrowPickerVisible.value = false
     trPickerVisible.value = false
+    boxSelectActive.value = false
+    boxSelectStart.value = null
+    boxSelectEnd.value = null
+    boxSelectedSegmentIds.value = new Set()
   } else if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
     event.preventDefault()
     const sessionId = editorStore.historySessionId
@@ -2038,6 +2175,13 @@ function onKeyDown(event: KeyboardEvent): void {
     event.preventDefault()
     const nextMode: Record<DrawingMode, DrawingMode> = { STRAIGHT: 'CURVE', CURVE: 'FREE', FREE: 'STRAIGHT' }
     roadStore.setDrawingMode(nextMode[roadStore.drawingContext.mode])
+  } else if (event.key === 'p' || event.key === 'P') {
+    event.preventDefault()
+    if (editorStore.activeTool === 'PARALLEL_ROAD') {
+      editorStore.setActiveTool('SELECT')
+    } else {
+      editorStore.setActiveTool('PARALLEL_ROAD')
+    }
   }
 }
 
@@ -2424,4 +2568,24 @@ onBeforeUnmount(() => {
 .tr-picker-actions button:first-child:hover { background: #3670b8; }
 .tr-picker-actions button:last-child { background: #4a5160; }
 .tr-picker-actions button:last-child:hover { background: #5a6270; }
+.box-select-rect {
+  position: fixed;
+  border: 2px dashed #e74c3c;
+  background: rgba(231, 76, 60, 0.08);
+  pointer-events: none;
+  z-index: 100;
+}
+.box-select-info {
+  position: fixed;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 16px;
+  background: rgba(231, 76, 60, 0.85);
+  color: #fff;
+  border-radius: 16px;
+  font-size: 13px;
+  pointer-events: none;
+  z-index: 100;
+}
 </style>

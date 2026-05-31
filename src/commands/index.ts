@@ -6,6 +6,7 @@ export type {
   AddSegmentCommand,
   AddSignalStepCommand,
   AddTrafficLightCommand,
+  BatchDeleteCommand,
   CreateParallelSegmentCommand,
   DeleteSegmentCommand,
   MoveNodeCommand,
