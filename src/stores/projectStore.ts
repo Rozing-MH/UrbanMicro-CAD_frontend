@@ -7,9 +7,11 @@ import { projectApi } from '@/api/projectApi'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { useSimulationStore } from '@/stores/simulationStore'
+import { useEditorStateStore } from '@/stores/editorStateStore'
 import { storeEventBus } from '@/stores/storeEventBus'
+import { historyStack } from '@/commands/HistoryStack'
 import { SceneSerializer } from '@/domain/scene-serializer'
-import type { ProjectPayload } from '@/domain/scene-serializer'
+import type { ProjectPayload, SceneRebuildResult } from '@/domain/scene-serializer'
 
 export interface ProjectMeta {
   id: string
@@ -41,6 +43,28 @@ export interface ProjectDTO {
   thumbnailUrl?: string
 }
 
+/** 快照摘要信息 */
+export interface SnapshotInfo {
+  id: number
+  projectId: string
+  version: number
+  description: string
+  createdAt: string
+}
+
+/** 本地导入/导出的 JSON 结构 */
+export interface ProjectExportData {
+  name: string
+  description: string
+  exportedAt: string
+  formatVersion: number
+  topologyData: TopologyData
+  ruleData: RuleData
+}
+
+/** 当前导出格式版本 */
+const EXPORT_FORMAT_VERSION = 1
+
 /** SceneSerializer 单例 */
 const serializer = new SceneSerializer()
 
@@ -53,12 +77,29 @@ function snapshotToPayload(snapshot: ProjectSnapshot): ProjectPayload {
   }
 }
 
+/** 验证导入数据的结构完整性 */
+function validateExportData(data: unknown): data is ProjectExportData {
+  if (typeof data !== 'object' || data === null) return false
+  const d = data as Record<string, unknown>
+  if (!d.topologyData || typeof d.topologyData !== 'object') return false
+  if (!d.ruleData || typeof d.ruleData !== 'object') return false
+  return true
+}
+
 export const useProjectStore = defineStore('project', () => {
   const currentProject = ref<ProjectMeta | null>(null)
   const isDirty = ref(false)
   const lastSavedAt = ref<string | null>(null)
   const projectList = ref<ProjectMeta[]>([])
   const isLoadingList = ref(false)
+
+  // ---- 快照列表状态 ----
+  const snapshots = ref<SnapshotInfo[]>([])
+  const snapshotsTotal = ref(0)
+  const isLoadingSnapshots = ref(false)
+
+  // ---- 回滚竞态防护 ----
+  let rollbackGeneration = 0
 
   function setCurrentProject(meta: ProjectMeta | null): void {
     currentProject.value = meta
@@ -90,6 +131,43 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   /**
+   * 将 SceneSerializer 反序列化结果应用到各 Store。
+   * 提取公共逻辑，避免 3 处重复。
+   */
+  function applySceneResult(result: SceneRebuildResult): void {
+    const roadStore = useRoadNetworkStore()
+    roadStore.restoreNetwork(result.network)
+
+    // 路由 legacy 规则中的车道箭头到 roadNetworkStore
+    for (const arrow of result.pendingLaneArrows) {
+      roadStore.setLaneArrow({ ...arrow, isManualOverride: true })
+    }
+
+    const ruleStore = useTrafficRuleStore()
+    ruleStore.restoreRules(result.ruleSets)
+
+    const simStore = useSimulationStore()
+    simStore.setODMatrix(result.odMatrix)
+    simStore.setVehicleMix(result.vehicleMix)
+
+    // 通知需要重建 mesh
+    if (result.requiresMeshRebuild) {
+      storeEventBus.emit('scene:mesh-rebuild-needed', {})
+    }
+  }
+
+  /**
+   * 清除命令历史栈并重置编辑器历史状态。
+   * 在 loadProject / loadSnapshot / importFromJson 后调用，
+   * 防止旧命令的 undo 产生不一致状态。
+   */
+  function resetHistoryAfterRestore(): void {
+    historyStack.clear()
+    const editor = useEditorStateStore()
+    editor.updateHistoryState(-1, 0)
+  }
+
+  /**
    * 加载工程并恢复所有 Store。
    * 使用 SceneSerializer 协调反序列化，修复 5 个已知 Bug：
    * 1. vehicleMix 未恢复 → 现在 restoreRules 提取并恢复
@@ -104,26 +182,8 @@ export const useProjectStore = defineStore('project', () => {
 
     const payload = snapshotToPayload(snapshot)
     const result = serializer.deserialize(payload)
-
-    const roadStore = useRoadNetworkStore()
-    roadStore.restoreNetwork(result.network)
-
-    // 路由 legacy 规则中的车道箭头到 roadNetworkStore
-    for (const arrow of result.pendingLaneArrows) {
-      roadStore.setLaneArrow({ ...arrow, isManualOverride: true })
-    }
-
-    const ruleStore = useTrafficRuleStore()
-    ruleStore.restoreRules(result.ruleSets)
-
-    const simStore = useSimulationStore()
-    simStore.setODMatrix(result.odMatrix)
-    simStore.setVehicleMix(result.vehicleMix)  // Bug Fix: 之前从未恢复
-
-    // 通知需要重建 mesh
-    if (result.requiresMeshRebuild) {
-      storeEventBus.emit('scene:mesh-rebuild-needed', {})
-    }
+    applySceneResult(result)
+    resetHistoryAfterRestore()
   }
 
   /**
@@ -168,16 +228,129 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   /**
-   * 加载指定版本快照。
-   * 当前 API 仅支持最新快照；version 参数预留。
+   * 获取工程快照版本列表。
+   * 对齐设计文档 FR5.3：GET /api/projects/{id}/snapshots
    */
-  async function loadSnapshot(projectId: string, _version?: number): Promise<void> {
-    await loadProject(projectId)
+  async function fetchSnapshots(projectId: string, page: number = 1, size: number = 20): Promise<void> {
+    isLoadingSnapshots.value = true
+    try {
+      const result = await projectApi.listSnapshots(projectId, page, size)
+      snapshots.value = result.items
+      snapshotsTotal.value = result.total
+    } finally {
+      isLoadingSnapshots.value = false
+    }
+  }
+
+  /**
+   * 加载指定版本快照并恢复所有 Store。
+   * 对齐设计文档 FR5.3：GET /api/projects/{id}/snapshots/{version}
+   * 回滚操作：用户选择历史版本 → 反序列化覆盖当前状态 → 重建 3D mesh
+   * 包含竞态防护：连续点击回滚时，仅最新请求生效。
+   */
+  async function loadSnapshot(projectId: string, version: number): Promise<void> {
+    const gen = ++rollbackGeneration
+    const snapshot = await projectApi.getSnapshot(projectId, version)
+    // 如果有更新的回滚请求，丢弃本请求的结果
+    if (gen !== rollbackGeneration) return
+
+    const payload = snapshotToPayload(snapshot)
+    const result = serializer.deserialize(payload)
+    applySceneResult(result)
+    resetHistoryAfterRestore()
+
+    // 回滚后标记为 dirty（与当前后端保存的版本不同）
+    markDirty()
+  }
+
+  /**
+   * 导出当前工程为 JSON 字符串。
+   * 对齐设计文档 FR5：本地 JSON 导出完整工程快照
+   */
+  function exportToJson(): string {
+    if (!currentProject.value) throw new Error('No project loaded')
+
+    const roadStore = useRoadNetworkStore()
+    const ruleStore = useTrafficRuleStore()
+    const simStore = useSimulationStore()
+
+    const network = {
+      nodes: roadStore.nodes,
+      segments: roadStore.segments,
+      lanes: roadStore.lanes,
+      laneArrows: roadStore.laneArrows,
+      halfEdges: roadStore.halfEdges,
+    }
+
+    const rules = ruleStore.serialize(simStore.odMatrix, simStore.vehicleMix)
+    const payload = serializer.serialize(
+      network,
+      rules.ruleSets,
+      simStore.odMatrix,
+      simStore.vehicleMix,
+    )
+
+    const exportData: ProjectExportData = {
+      name: currentProject.value.name,
+      description: currentProject.value.description,
+      exportedAt: new Date().toISOString(),
+      formatVersion: EXPORT_FORMAT_VERSION,
+      topologyData: payload.topologyData,
+      ruleData: payload.ruleData,
+    }
+
+    return JSON.stringify(exportData, null, 2)
+  }
+
+  /**
+   * 从 JSON 字符串导入工程数据并恢复所有 Store。
+   * 对齐设计文档 FR5：本地 JSON 导入完整工程快照
+   * 使用运行时验证确保导入数据结构完整。
+   */
+  function importFromJson(jsonStr: string): void {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(jsonStr)
+    } catch {
+      throw new Error('无效的工程文件：JSON 解析失败')
+    }
+
+    if (!validateExportData(parsed)) {
+      throw new Error('无效的工程文件：缺少 topologyData 或 ruleData')
+    }
+
+    const payload: ProjectPayload = {
+      topologyData: parsed.topologyData,
+      ruleData: parsed.ruleData,
+      version: parsed.topologyData.version,
+    }
+
+    const result = serializer.deserialize(payload)
+    applySceneResult(result)
+    resetHistoryAfterRestore()
+
+    // 更新项目元数据（如果有当前项目）
+    if (currentProject.value) {
+      updateProjectMeta({
+        name: parsed.name ?? currentProject.value.name,
+        description: parsed.description ?? currentProject.value.description,
+      })
+    }
+
+    markDirty()
+  }
+
+  function clearSnapshots(): void {
+    snapshots.value = []
+    snapshotsTotal.value = 0
   }
 
   return {
     currentProject, isDirty, lastSavedAt, projectList, isLoadingList,
+    snapshots, snapshotsTotal, isLoadingSnapshots,
     setCurrentProject, markDirty, markSaved, setProjectList, setLoadingList, updateProjectMeta,
-    loadProject, saveProject, loadSnapshot,
+    loadProject, saveProject,
+    fetchSnapshots, loadSnapshot, clearSnapshots,
+    exportToJson, importFromJson,
   }
 })

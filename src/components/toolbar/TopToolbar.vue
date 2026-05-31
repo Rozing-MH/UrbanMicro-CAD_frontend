@@ -83,8 +83,17 @@
       <button class="action-btn" :disabled="saving" @click="onSave">
         {{ saving ? '保存中…' : '保存' }}
       </button>
+      <button class="action-btn secondary" @click="showSnapshotDialog = true">历史版本</button>
+      <button class="action-btn secondary" @click="onImport">导入</button>
+      <button class="action-btn secondary" @click="onExport">导出</button>
       <button class="action-btn" @click="onExit">退出</button>
     </div>
+
+    <SnapshotListDialog
+      :visible="showSnapshotDialog"
+      @close="showSnapshotDialog = false"
+      @rolled-back="showSnapshotDialog = false"
+    />
   </div>
 </template>
 
@@ -100,6 +109,7 @@ import { useSimulationStore } from '@/stores/simulationStore'
 import { historyStack } from '@/commands/HistoryStack'
 import { projectApi } from '@/api/projectApi'
 import { useRuleValidation } from '@/composables/useRuleValidation'
+import SnapshotListDialog from '@/components/panels/SnapshotListDialog.vue'
 
 const router = useRouter()
 const editor = useEditorStateStore()
@@ -111,6 +121,7 @@ const nodeAdjustStore = useNodeAdjustmentStore()
 const { runValidation } = useRuleValidation()
 
 const saving = ref(false)
+const showSnapshotDialog = ref(false)
 
 interface ToolDef { id: ToolMode; icon: string; label: string; title: string }
 const toolList: ToolDef[] = [
@@ -215,6 +226,56 @@ async function onSave(): Promise<void> {
   }
 }
 
+function onExport(): void {
+  if (!project.currentProject) return
+  try {
+    const jsonStr = project.exportToJson()
+    const blob = new Blob([jsonStr], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const now = new Date()
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    a.download = `${project.currentProject.name}_${dateStr}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    editor.showNotification({ type: 'success', message: '已导出工程文件', durationMs: 2500 })
+  } catch (err) {
+    editor.setError(err instanceof Error ? err.message : '导出失败')
+  }
+}
+
+function onImport(): void {
+  if (!project.currentProject) return
+  if (project.isDirty && !confirm('导入将覆盖当前所有数据，未保存的修改将丢失。确认继续？')) return
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.json'
+  input.onchange = () => {
+    const file = input.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const jsonStr = reader.result as string
+        project.importFromJson(jsonStr)
+        editor.showNotification({ type: 'success', message: '已导入工程数据', durationMs: 3000 })
+      } catch (err) {
+        editor.setError(err instanceof Error ? err.message : '导入失败：文件格式无效')
+      }
+    }
+    reader.onerror = () => {
+      editor.setError('读取文件失败')
+    }
+    reader.readAsText(file)
+    document.body.removeChild(input)
+  }
+  document.body.appendChild(input)
+  input.click()
+}
+
 function onExit(): void {
   if (project.isDirty) {
     if (!confirm('当前项目有未保存的修改，确认退出？')) return
@@ -281,6 +342,8 @@ function onExit(): void {
   cursor: pointer; font-size: 12px;
 }
 .action-btn + .action-btn { background: #4a5160; margin-left: 6px; }
+.action-btn.secondary { background: #4a5160; }
+.action-btn.secondary:hover { background: #5a6170; }
 .validate-btn { background: #3a6e45; }
 .validate-btn:hover { background: #468352; }
 .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }

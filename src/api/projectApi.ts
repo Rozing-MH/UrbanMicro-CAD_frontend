@@ -1,5 +1,5 @@
 import apiClient, { getApiError, isApiSuccess, type ApiResponse, type PageResponse } from './client'
-import type { ProjectDTO, ProjectMeta, ProjectSnapshot } from '@/stores/projectStore'
+import type { ProjectDTO, ProjectMeta, ProjectSnapshot, SnapshotInfo } from '@/stores/projectStore'
 
 function dtoToProjectMeta(dto: ProjectDTO): ProjectMeta {
   return {
@@ -19,6 +19,25 @@ function dtoToSnapshot(dto: ProjectDTO): ProjectSnapshot {
     topology: dto.topologyData,
     rules: dto.ruleData,
     odMatrix: { pairs: dto.ruleData.odConfig?.pairs ?? [] },
+  }
+}
+
+/** 快照摘要 DTO（后端响应结构） */
+interface SnapshotInfoDTO {
+  id: number
+  projectId: string
+  version: number
+  description: string
+  createdAt: string
+}
+
+function dtoToSnapshotInfo(dto: SnapshotInfoDTO): SnapshotInfo {
+  return {
+    id: dto.id,
+    projectId: dto.projectId,
+    version: dto.version,
+    description: dto.description,
+    createdAt: dto.createdAt,
   }
 }
 
@@ -61,5 +80,33 @@ export const projectApi = {
 
   async delete(id: string): Promise<void> {
     await apiClient.delete(`/projects/${id}`)
+  },
+
+  /** 获取工程快照版本列表，返回领域类型 */
+  async listSnapshots(
+    projectId: string,
+    page: number = 1,
+    size: number = 20,
+  ): Promise<{ items: SnapshotInfo[]; total: number }> {
+    const res = await apiClient.get<ApiResponse<SnapshotInfoDTO[] | PageResponse<SnapshotInfoDTO>>>(
+      `/projects/${projectId}/snapshots`,
+      { params: { page, size } },
+    )
+    const data = res.data.data
+    if (!data) return { items: [], total: 0 }
+    if (Array.isArray(data)) {
+      return { items: data.map(dtoToSnapshotInfo), total: data.length }
+    }
+    const items = data.records ?? data.content ?? data.items ?? []
+    return { items: items.map(dtoToSnapshotInfo), total: data.total ?? items.length }
+  },
+
+  /** 加载指定版本的快照 */
+  async getSnapshot(projectId: string, version: number): Promise<ProjectSnapshot> {
+    const res = await apiClient.get<ApiResponse<ProjectDTO>>(
+      `/projects/${projectId}/snapshots/${version}`,
+    )
+    if (!res.data.data) throw new Error('Snapshot not found')
+    return dtoToSnapshot(res.data.data)
   },
 }
