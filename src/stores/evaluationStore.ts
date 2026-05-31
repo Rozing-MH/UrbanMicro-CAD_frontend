@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { LOSGrade, EvaluationResult, HeatmapConfig, SegmentMetric } from '@/types/evaluation'
+import type { LOSGrade, EvaluationResult, HeatmapConfig, SegmentMetric, FlightLine, FlightLineFilter } from '@/types/evaluation'
 import { DEFAULT_HEATMAP_STOPS, delayToLOS } from '@/types/evaluation'
 import type { LaneMetricSnapshot } from '@/types/simulation'
 import { computeEvaluation, type BridgeContext } from '@/services/evaluationBridge'
@@ -27,6 +27,15 @@ export const useEvaluationStore = defineStore('evaluation', () => {
   })
   const reportId = ref<string | null>(null)
   const isComputing = ref(false)
+
+  // ---- Flight line state ----
+  const flightLineVisible = ref(false)
+  const flightLineFilter = ref<FlightLineFilter>({
+    selectedSegmentId: null,
+    selectedNodeId: null,
+    vehicleTypeFilter: [],
+    enabled: false,
+  })
 
   const networkLOS = computed<LOSGrade | null>(() => {
     if (results.value.size === 0) return null
@@ -156,8 +165,17 @@ export const useEvaluationStore = defineStore('evaluation', () => {
     segmentMetrics.value.clear()
     laneMetricsMap.value = new Map()
     evalMode.value = 'NONE'
+    flightLineVisible.value = false
     reportId.value = null
     isComputing.value = false
+  }
+
+  function toggleFlightLines(): void {
+    flightLineVisible.value = !flightLineVisible.value
+  }
+
+  function setFlightLineFilter(patch: Partial<FlightLineFilter>): void {
+    flightLineFilter.value = { ...flightLineFilter.value, ...patch }
   }
 
   /**
@@ -222,9 +240,11 @@ export const useEvaluationStore = defineStore('evaluation', () => {
 
   return {
     evalMode, results, segmentMetrics, laneMetricsMap, heatmapConfig, reportId, isComputing,
+    flightLineVisible, flightLineFilter,
     networkLOS, worstIntersectionId,
     setEvalMode, setResult, setSegmentMetric, bulkSetMetrics,
     setHeatmapConfig, setReportId, setComputing, clear,
+    toggleFlightLines, setFlightLineFilter,
     updateFromSimulation, exportCSV, generateReport, exportPDF,
   }
 })

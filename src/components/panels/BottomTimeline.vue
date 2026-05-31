@@ -27,6 +27,7 @@
         <button class="view-btn" :class="{ active: evalStore.evalMode === 'SPEED' }" @click="setEvalSpeed">速度</button>
         <button class="view-btn" :class="{ active: evalStore.evalMode === 'DELAY' }" @click="setEvalDelay">延误</button>
         <button class="view-btn" :class="{ active: evalStore.evalMode === 'LOS' }" @click="setEvalLOS">LOS</button>
+        <button class="view-btn" :class="{ active: evalStore.flightLineVisible }" @click="evalStore.toggleFlightLines()">飞线</button>
         <button class="view-btn" :class="{ active: evalStore.evalMode === 'NONE' }" @click="setHiddenView">隐藏</button>
       </div>
 

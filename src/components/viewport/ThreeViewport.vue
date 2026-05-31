@@ -78,6 +78,8 @@ import { useCameraControls } from '@/composables/useCameraControls'
 import { useGizmoControls } from '@/composables/useGizmoControls'
 import { useNodeAdjustmentStore, type GizmoMode } from '@/stores/nodeAdjustmentStore'
 import { useHeatmap } from '@/composables/useHeatmap'
+import { useFlightLines } from '@/composables/useFlightLines'
+import { buildFlightLines } from '@/services/flightLineService'
 import { useLOSBadges } from '@/composables/useLOSBadges'
 import { useGroundGrid } from '@/composables/useGroundGrid'
 import { useDecalRenderer } from '@/composables/useDecalRenderer'
@@ -170,6 +172,7 @@ const gizmoControls = useGizmoControls(
   commitGizmoDrag,
 )
 const heatmap = useHeatmap(sceneRef)
+const flightLines = useFlightLines(sceneRef)
 /** LOS badges — initialized in onMounted after scene is created */
 const losBadges = shallowRef<ReturnType<typeof useLOSBadges> | null>(null)
 const groundGrid = useGroundGrid(sceneRef)
@@ -2141,6 +2144,7 @@ watch(
     if (evaluationStore.evalMode === 'NONE') {
       heatmap.clearHeatmap()
       losBadges.value?.clearLOSBadges()
+      flightLines.clearAll()
       return
     }
     // Update segment heatmaps
@@ -2342,6 +2346,25 @@ onMounted(() => {
           lanePositions,
           Array.from(roadStore.lanes.keys()),
         )
+        // Flight lines: render if enabled and simulation is running
+        if (evaluationStore.flightLineVisible) {
+          const laneGeos = new Map(
+            Array.from(roadStore.lanes.values()).map(l => [l.id, { id: l.id, segmentId: l.segmentId, startNodeId: '', endNodeId: '' }])
+          )
+          const segGeos = new Map(
+            Array.from(roadStore.segments.values()).map(s => [s.id, {
+              id: s.id, startNodeId: s.startNodeId, endNodeId: s.endNodeId,
+              centerLine: s.centerLine, startElevation: s.elevation.startZ, endElevation: s.elevation.endZ,
+            }])
+          )
+          const flFilter = evaluationStore.flightLineFilter
+          const flData = buildFlightLines(
+            simStore.vehicles, laneGeos, segGeos,
+            flFilter.selectedSegmentId, flFilter.selectedNodeId,
+          )
+          flightLines.renderFlightLines(flData)
+          flightLines.updateAnimation(0.016)
+        }
       }
     }
   })
@@ -2382,6 +2405,7 @@ onBeforeUnmount(() => {
   cameraControls.detach()
   gizmoControls.dispose()
   heatmap.dispose()
+  flightLines.dispose()
   losBadges.value?.dispose()
   renderer.dispose()
 })
