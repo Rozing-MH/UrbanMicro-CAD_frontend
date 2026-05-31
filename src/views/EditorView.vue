@@ -46,7 +46,6 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { useSimulationStore } from '@/stores/simulationStore'
-import { projectApi } from '@/api/projectApi'
 import { historyStack } from '@/commands/HistoryStack'
 import { disposeWorkers } from '@/workers'
 
@@ -93,12 +92,8 @@ onMounted(async () => {
     return
   }
   try {
-    const snapshot = await projectApi.get(id)
+    await project.loadProject(id)
     if (isEditorUnmounted) return
-    project.setCurrentProject(snapshot.meta)
-    road.deserialize(snapshot.topology)
-    rules.deserialize(snapshot.rules)
-    sim.setODMatrix(snapshot.odMatrix)
   } catch (err) {
     if (isEditorUnmounted) return
     loadError.value = err instanceof Error ? err.message : '加载失败'

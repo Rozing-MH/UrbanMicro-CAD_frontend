@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import type {
   RoadNode,
   RoadSegment,
+  RoadNetwork,
   Lane,
   LaneArrow,
   HalfEdge,
@@ -14,7 +15,13 @@ import type {
   CrossSectionProfile,
   MeshData,
 } from '@/types/road-network'
-import { createSegmentFromPoints, offsetPolyline } from '@/utils/roadGeometry'
+import {
+  createSegmentFromPoints,
+  offsetPolyline,
+  createLanesForSegment,
+  buildHalfEdgesForSegment,
+  laneArrowKey,
+} from '@/utils/roadGeometry'
 import { storeEventBus } from '@/stores/storeEventBus'
 
 export const useRoadNetworkStore = defineStore('roadNetwork', () => {
@@ -46,43 +53,13 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
   const segmentCount = computed(() => segments.value.size)
   const isDrawing = computed(() => drawingContext.value.state !== 'IDLE')
 
-  function laneArrowKey(arrow: Pick<LaneArrow, 'nodeId' | 'laneId'>): string {
-    return `${arrow.nodeId}:${arrow.laneId}`
-  }
-
-  function createLanesForSegment(seg: RoadSegment): Lane[] {
-    return seg.profile.lanes.map((laneDef, index) => ({
-      id: `${seg.id}:lane:${index}`,
-      segmentId: seg.id,
-      index,
-      direction: laneDef.direction,
-      type: laneDef.type,
-      width: laneDef.width,
-    }))
-  }
+  // laneArrowKey, createLanesForSegment, buildHalfEdgesForSegment 已提取至 roadGeometry.ts
 
   function ensureSegmentHalfEdges(seg: RoadSegment): void {
-    const forwardId = `${seg.id}:he:forward`
-    const backwardId = `${seg.id}:he:backward`
-    if (!halfEdges.value.has(forwardId)) {
-      halfEdges.value.set(forwardId, {
-        id: forwardId,
-        originNodeId: seg.startNodeId,
-        twinId: backwardId,
-        nextId: '',
-        segmentId: seg.id,
-        laneIndex: 0,
-      })
-    }
-    if (!halfEdges.value.has(backwardId)) {
-      halfEdges.value.set(backwardId, {
-        id: backwardId,
-        originNodeId: seg.endNodeId,
-        twinId: forwardId,
-        nextId: '',
-        segmentId: seg.id,
-        laneIndex: 0,
-      })
+    for (const he of buildHalfEdgesForSegment(seg)) {
+      if (!halfEdges.value.has(he.id)) {
+        halfEdges.value.set(he.id, he)
+      }
     }
   }
 
@@ -405,6 +382,16 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     topologyVersion.value = data.version
   }
 
+  /** 接收 SceneSerializer 预重建的 RoadNetwork Map 结构 */
+  function restoreNetwork(network: RoadNetwork): void {
+    nodes.value = new Map(network.nodes)
+    segments.value = new Map(network.segments)
+    lanes.value = new Map(network.lanes)
+    laneArrows.value = new Map(network.laneArrows)
+    halfEdges.value = new Map(network.halfEdges)
+    topologyVersion.value++
+  }
+
   function clear(): void {
     nodes.value.clear()
     segments.value.clear()
@@ -428,6 +415,6 @@ export const useRoadNetworkStore = defineStore('roadNetwork', () => {
     startDrawing, updatePreview, confirmDrawing, cancelDrawing,
     setDrawingMode, setElevationMode, setActiveCrossSection,
     selectNode, selectSegment, clearSelection, setHoveredSegment,
-    serialize, deserialize, clear,
+    serialize, deserialize, restoreNetwork, clear,
   }
 })

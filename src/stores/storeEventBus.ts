@@ -35,6 +35,8 @@ export interface StoreEventMap {
   'simulation:vehicle-mix-changed': {}
   // --- evaluation ---
   'evaluation:report-generated': { reportId: string }
+  // --- scene ---
+  'scene:mesh-rebuild-needed': {}
 }
 
 type EventKey = keyof StoreEventMap

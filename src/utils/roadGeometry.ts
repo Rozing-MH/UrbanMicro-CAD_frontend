@@ -2,6 +2,9 @@ import { getGeometryWorker } from '@/workers'
 import type {
   CrossSectionProfile,
   ElevationProfile,
+  HalfEdge,
+  Lane,
+  LaneArrow,
   MeshData,
   Point2D,
   RoadSegment,
@@ -162,5 +165,50 @@ export function createSegmentFromPoints(params: {
 export function rebuildCurvedCenterLine(seg: RoadSegment, startPos: Point2D, endPos: Point2D): Point2D[] {
   if (!seg.controlPoint) return [startPos, endPos]
   return buildQuadraticCenterLine(startPos, seg.controlPoint, endPos, 32)
+}
+
+// ============================================================
+// 从 roadNetworkStore 提取的纯函数
+// ============================================================
+
+/** 根据路段断面配置生成车道列表（纯函数版本） */
+export function createLanesForSegment(seg: RoadSegment): Lane[] {
+  return seg.profile.lanes.map((laneDef, index) => ({
+    id: `${seg.id}:lane:${index}`,
+    segmentId: seg.id,
+    index,
+    direction: laneDef.direction,
+    type: laneDef.type,
+    width: laneDef.width,
+  }))
+}
+
+/** 根据路段生成正/反半边数组（纯函数版本，返回新半边而非直接写 Map） */
+export function buildHalfEdgesForSegment(seg: RoadSegment): HalfEdge[] {
+  const forwardId = `${seg.id}:he:forward`
+  const backwardId = `${seg.id}:he:backward`
+  return [
+    {
+      id: forwardId,
+      originNodeId: seg.startNodeId,
+      twinId: backwardId,
+      nextId: '',
+      segmentId: seg.id,
+      laneIndex: 0,
+    },
+    {
+      id: backwardId,
+      originNodeId: seg.endNodeId,
+      twinId: forwardId,
+      nextId: '',
+      segmentId: seg.id,
+      laneIndex: 0,
+    },
+  ]
+}
+
+/** 生成车道箭头 Map 键（纯函数版本） */
+export function laneArrowKey(arrow: Pick<LaneArrow, 'nodeId' | 'laneId'>): string {
+  return `${arrow.nodeId}:${arrow.laneId}`
 }
 

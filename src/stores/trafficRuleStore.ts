@@ -13,6 +13,13 @@ import type {
 } from '@/types/traffic-rule'
 import type { ODMatrix, VehicleMixConfig } from '@/types/simulation'
 import { DEFAULT_VEHICLE_MIX } from '@/types/simulation'
+import {
+  normalizeTrafficLight as _normalizeTrafficLight,
+  normalizeLaneRestriction as _normalizeLaneRestriction,
+  serializeTrafficLight as _serializeTrafficLight,
+  serializeLaneRestriction as _serializeLaneRestriction,
+  isDocumentRuleData as _isDocumentRuleData,
+} from '@/domain/scene-serializer'
 // Lazy accessor — imported here but only called inside actions to avoid
 // tight module-level coupling. Pinia factory functions are safe to import;
 // they only create the store instance when invoked.
@@ -32,48 +39,25 @@ export const useTrafficRuleStore = defineStore('trafficRule', () => {
     return `${tr.nodeId}:${tr.fromSegmentId}:${tr.toSegmentId}:${tr.restriction}`
   }
 
+  // 以下函数已提取至 domain/scene-serializer，此处委托调用
   function isDocumentRuleData(data: RuleData | LegacyRuleData): data is RuleData {
-    return Array.isArray((data as RuleData).ruleSets)
+    return _isDocumentRuleData(data)
   }
 
   function normalizeTrafficLight(light: TrafficLightController): TrafficLightController {
-    const strategy = light.strategy === 'FIXED_TIMING'
-      ? 'FIXED'
-      : light.strategy === 'SENSOR_ACTUATED'
-        ? 'ACTUATED'
-        : light.strategy
-    return { ...light, strategy }
+    return _normalizeTrafficLight(light)
   }
 
   function serializeTrafficLight(light: TrafficLightController): TrafficLightController {
-    const strategy = light.strategy === 'FIXED'
-      ? 'FIXED_TIMING'
-      : light.strategy === 'ACTUATED'
-        ? 'SENSOR_ACTUATED'
-        : light.strategy
-    return { ...light, strategy }
-  }
-
-  function normalizeMarkingType(type: LaneRestriction['markingType']): LaneRestriction['markingType'] {
-    return type === 'SOLID_DOUBLE_YELLOW' ? 'DOUBLE_SOLID_YELLOW' : type
-  }
-
-  function serializeMarkingType(type: LaneRestriction['markingType']): LaneRestriction['markingType'] {
-    return type === 'DOUBLE_SOLID_YELLOW' ? 'SOLID_DOUBLE_YELLOW' : type
+    return _serializeTrafficLight(light)
   }
 
   function normalizeLaneRestriction(restriction: LaneRestriction): LaneRestriction {
-    return {
-      ...restriction,
-      markingType: normalizeMarkingType(restriction.markingType),
-    }
+    return _normalizeLaneRestriction(restriction)
   }
 
   function serializeLaneRestriction(restriction: LaneRestriction): LaneRestriction {
-    return {
-      ...restriction,
-      markingType: serializeMarkingType(restriction.markingType),
-    }
+    return _serializeLaneRestriction(restriction)
   }
 
   function resolveLaneRuleNodeId(laneId: string): string | null {
@@ -259,6 +243,28 @@ export const useTrafficRuleStore = defineStore('trafficRule', () => {
     ruleVersion.value = data.version ?? ruleVersion.value + 1
   }
 
+  /** 接收 SceneSerializer 预处理的规则数据，无需跨 Store 依赖 */
+  function restoreRules(ruleSets: TrafficRuleSetData[]): void {
+    const flatRestrictions = ruleSets.flatMap((set) =>
+      set.laneRestrictions.map((item) =>
+        normalizeLaneRestriction({ ...item.restriction, laneId: item.laneId }),
+      ),
+    )
+    const flatConnectors = ruleSets.flatMap((set) => set.laneConnectors)
+    const flatLights = ruleSets.flatMap((set) =>
+      set.trafficLight ? [normalizeTrafficLight(set.trafficLight)] : [],
+    )
+    const flatTurnRestrictions = ruleSets.flatMap((set) => set.turnRestrictions)
+    const flatCrosswalks = ruleSets.flatMap((set) => set.crosswalks ?? [])
+
+    laneRestrictions.value = new Map(flatRestrictions.map((r) => [r.laneId, r]))
+    laneConnectors.value = new Map(flatConnectors.map((c) => [c.id, c]))
+    trafficLights.value = new Map(flatLights.map((l) => [l.id, l]))
+    turnRestrictions.value = new Map(flatTurnRestrictions.map((t) => [turnRestrictionKey(t), t]))
+    crosswalks.value = new Map(flatCrosswalks.map((cw) => [cw.id, cw]))
+    ruleVersion.value++
+  }
+
   function clear(): void {
     trafficLights.value.clear()
     laneRestrictions.value.clear()
@@ -278,6 +284,6 @@ export const useTrafficRuleStore = defineStore('trafficRule', () => {
     addTurnRestriction, removeTurnRestriction,
     addCrosswalk, removeCrosswalk,
     selectLight, getConnectorsFrom,
-    serialize, deserialize, clear,
+    serialize, deserialize, restoreRules, clear,
   }
 })

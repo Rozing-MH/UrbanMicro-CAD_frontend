@@ -8,6 +8,8 @@ import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { storeEventBus } from '@/stores/storeEventBus'
+import { SceneSerializer } from '@/domain/scene-serializer'
+import type { ProjectPayload } from '@/domain/scene-serializer'
 
 export interface ProjectMeta {
   id: string
@@ -37,6 +39,18 @@ export interface ProjectDTO {
   updatedAt: string
   ownerId?: string
   thumbnailUrl?: string
+}
+
+/** SceneSerializer 单例 */
+const serializer = new SceneSerializer()
+
+/** 将 ProjectSnapshot 转为 SceneSerializer 输入格式 */
+function snapshotToPayload(snapshot: ProjectSnapshot): ProjectPayload {
+  return {
+    topologyData: snapshot.topology,
+    ruleData: snapshot.rules,
+    version: snapshot.topology.version,
+  }
 }
 
 export const useProjectStore = defineStore('project', () => {
@@ -76,29 +90,45 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   /**
-   * Load a project from backend and restore all stores.
-   * Per design doc: ProjectStore.loadProject() encapsulates API call + store restoration.
+   * 加载工程并恢复所有 Store。
+   * 使用 SceneSerializer 协调反序列化，修复 5 个已知 Bug：
+   * 1. vehicleMix 未恢复 → 现在 restoreRules 提取并恢复
+   * 2. 加载后无 meshData → requiresMeshRebuild 标记 + 事件
+   * 3. 跨 Store 写入 laneArrow → pendingLaneArrows 显式路由
+   * 4. OD 数据分裂 → SceneRebuildResult 统一输出
+   * 5. 重复恢复路径 → EditorView 应使用本方法
    */
   async function loadProject(projectId: string): Promise<void> {
     const snapshot = await projectApi.get(projectId)
     setCurrentProject(snapshot.meta)
 
-    // Restore road network
+    const payload = snapshotToPayload(snapshot)
+    const result = serializer.deserialize(payload)
+
     const roadStore = useRoadNetworkStore()
-    roadStore.deserialize(snapshot.topology)
+    roadStore.restoreNetwork(result.network)
 
-    // Restore traffic rules + OD
+    // 路由 legacy 规则中的车道箭头到 roadNetworkStore
+    for (const arrow of result.pendingLaneArrows) {
+      roadStore.setLaneArrow({ ...arrow, isManualOverride: true })
+    }
+
     const ruleStore = useTrafficRuleStore()
-    ruleStore.deserialize(snapshot.rules)
+    ruleStore.restoreRules(result.ruleSets)
 
-    // Restore OD matrix
     const simStore = useSimulationStore()
-    simStore.setODMatrix(snapshot.odMatrix)
+    simStore.setODMatrix(result.odMatrix)
+    simStore.setVehicleMix(result.vehicleMix)  // Bug Fix: 之前从未恢复
+
+    // 通知需要重建 mesh
+    if (result.requiresMeshRebuild) {
+      storeEventBus.emit('scene:mesh-rebuild-needed', {})
+    }
   }
 
   /**
-   * Save current project state to backend.
-   * Per design doc: ProjectStore.saveProject() serializes all stores + calls API.
+   * 保存当前工程状态到后端。
+   * 使用 SceneSerializer 协调序列化。
    */
   async function saveProject(): Promise<void> {
     if (!currentProject.value) throw new Error('No project loaded')
@@ -107,10 +137,29 @@ export const useProjectStore = defineStore('project', () => {
     const ruleStore = useTrafficRuleStore()
     const simStore = useSimulationStore()
 
+    // 构建 RoadNetwork 域对象
+    const network = {
+      nodes: roadStore.nodes,
+      segments: roadStore.segments,
+      lanes: roadStore.lanes,
+      laneArrows: roadStore.laneArrows,
+      halfEdges: roadStore.halfEdges,
+    }
+
+    // 序列化规则（仍使用 store 的 serialize 来生成 per-node ruleSets）
+    const rules = ruleStore.serialize(simStore.odMatrix, simStore.vehicleMix)
+
+    const payload = serializer.serialize(
+      network,
+      rules.ruleSets,
+      simStore.odMatrix,
+      simStore.vehicleMix,
+    )
+
     const snapshot: ProjectSnapshot = {
       meta: currentProject.value,
-      topology: roadStore.serialize(),
-      rules: ruleStore.serialize(simStore.odMatrix, simStore.vehicleMix),
+      topology: payload.topologyData,
+      rules: payload.ruleData,
       odMatrix: simStore.odMatrix,
     }
 
@@ -119,11 +168,10 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   /**
-   * Load a specific snapshot version from backend.
-   * Per design doc: ProjectStore.loadSnapshot() for version history browsing.
+   * 加载指定版本快照。
+   * 当前 API 仅支持最新快照；version 参数预留。
    */
   async function loadSnapshot(projectId: string, _version?: number): Promise<void> {
-    // Current API only supports latest snapshot; version param reserved for future
     await loadProject(projectId)
   }
 
