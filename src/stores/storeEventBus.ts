@@ -3,7 +3,7 @@
 // Per design doc: Store 间通过事件总线解耦，禁止 Store 之间直接引用。
 // ============================================================
 
-import type { CrossSectionProfile } from '@/types/road-network'
+import type { CrossSectionProfile, Point3D } from '@/types/road-network'
 import type { TurnDirection } from '@/types/traffic-rule'
 import type { LaneMetricSnapshot, SimulationFrame } from '@/types/simulation'
 
@@ -36,6 +36,8 @@ export interface StoreEventMap {
   'simulation:vehicle-mix-changed': {}
   // --- evaluation ---
   'evaluation:report-generated': { reportId: string }
+  // --- node-adjustment (FR2.2) ---
+  'node-adjustment:tangent-changed': { nodeId: string; handleIndex: number; direction: Point3D }
   // --- scene ---
   'scene:mesh-rebuild-needed': {}
 }

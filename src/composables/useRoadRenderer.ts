@@ -231,6 +231,27 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
     intersectionMeshes.set(nodeId, mesh)
   }
 
+  /** FR2.2: 更新交叉口 Coons Patch 曲面 mesh */
+  function updateIntersectionSurface(nodeId: string, meshData: MeshData): void {
+    if (!scene.value) return
+    // Remove existing intersection mesh
+    const existing = intersectionMeshes.get(nodeId)
+    if (existing) {
+      scene.value.remove(existing)
+      existing.geometry.dispose()
+      intersectionMeshes.delete(nodeId)
+    }
+    // Create new mesh from Coons Patch data
+    if (meshData.positions.length === 0) return
+    const geo = meshDataToGeometry(meshData)
+    const mesh = new THREE.Mesh(geo, intersectionMaterial)
+    mesh.receiveShadow = true
+    mesh.userData.nodeId = nodeId
+    mesh.userData.isIntersection = true
+    scene.value.add(mesh)
+    intersectionMeshes.set(nodeId, mesh)
+  }
+
   function highlightSegment(id: string | null): void {
     for (const [segId, mesh] of segmentMeshes) {
       if (segId === id) {
@@ -343,6 +364,7 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
     hidePreview,
     highlightSegment,
     updateIntersectionPolygon,
+    updateIntersectionSurface,
     addTrafficLight,
     removeTrafficLight,
     updateTrafficLightLamps,

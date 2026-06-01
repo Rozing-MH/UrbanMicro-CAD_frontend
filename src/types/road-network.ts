@@ -123,6 +123,8 @@ export interface RoadNode {
   controlMode: 'YIELD' | 'TRAFFIC_LIGHT' | 'ROUNDABOUT' | 'NONE'
   connectedSegmentIds: string[]
   polygonVertices: Point2D[]
+  /** 切线手柄数据（FR2.2），undefined 表示未初始化 */
+  tangentHandles?: TangentHandleData[]
 }
 
 export interface RoadSegment {
@@ -191,6 +193,22 @@ export interface DrawingContext {
   startElevation: number
   endElevation: number
   activeCrossSectionId: string | null
+}
+
+// ============================================================
+// Tangent Handle (FR2.2)
+// ============================================================
+
+/** 切线手柄数据 — 对齐设计文档 §4.2.2 TangentHandle 实体 */
+export interface TangentHandleData {
+  /** 手柄索引（对应 polygonVertices 中的顶点索引） */
+  index: number
+  /** 3D 方向（xz 平面方向 + y 高程偏移），归一化向量 */
+  direction: Point3D
+  /** 手柄长度（影响曲线弯曲程度） */
+  length: number
+  /** 控制点高程偏移 */
+  elevation: number
 }
 
 // ============================================================

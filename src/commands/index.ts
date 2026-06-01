@@ -20,6 +20,7 @@ export type {
   SetLaneRestrictionCommand,
   SetNodeControlModeCommand,
   RemoveLaneConnectorCommand,
+  SetTangentDirectionCommand,
   SetTurnRestrictionCommand,
   UpdateNodeCommand,
   UpdateSegmentCommand,

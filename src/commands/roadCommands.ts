@@ -54,6 +54,10 @@ function cloneNode(node: RoadNode): RoadNode {
     position: { ...node.position },
     connectedSegmentIds: [...node.connectedSegmentIds],
     polygonVertices: node.polygonVertices.map((point) => ({ ...point })),
+    tangentHandles: node.tangentHandles?.map((h) => ({
+      ...h,
+      direction: { ...h.direction },
+    })),
   }
 }
 
@@ -946,5 +950,51 @@ export class BatchDeleteCommand implements ICommand {
 
   getDescription(): string {
     return `Batch delete ${this.segmentIds.length} segments`
+  }
+}
+
+// ============================================================
+// FR2.2 切线手柄方向命令
+// ============================================================
+
+import type { Point3D, TangentHandleData } from '@/types/road-network'
+import { useNodeAdjustmentStore } from '@/stores/nodeAdjustmentStore'
+
+export class SetTangentDirectionCommand implements ICommand {
+  readonly timestamp = Date.now()
+
+  private oldHandles: TangentHandleData[]
+
+  constructor(
+    private nodeId: string,
+    private handleIndex: number,
+    private newDirection: Point3D,
+    private newLength: number,
+  ) {
+    // 保存旧值快照
+    const adjStore = useNodeAdjustmentStore()
+    const current = adjStore.getTangentHandles(nodeId)
+    this.oldHandles = current.map((h) => ({ ...h, direction: { ...h.direction } }))
+  }
+
+  execute(): void {
+    const adjStore = useNodeAdjustmentStore()
+    adjStore.setTangentDirection(this.nodeId, this.handleIndex, this.newDirection, this.newLength)
+    adjStore.commitTangentHandlesToNode(this.nodeId)
+  }
+
+  undo(): void {
+    const adjStore = useNodeAdjustmentStore()
+    // 恢复整个手柄数组的旧值
+    const roadStore = useRoadNetworkStore()
+    roadStore.updateNode(this.nodeId, {
+      tangentHandles: this.oldHandles.map((h) => ({ ...h, direction: { ...h.direction } })),
+    })
+    // 同步更新缓存
+    adjStore.initTangentHandles(this.nodeId)
+  }
+
+  getDescription(): string {
+    return `Set tangent direction of handle ${this.handleIndex} on node ${this.nodeId}`
   }
 }

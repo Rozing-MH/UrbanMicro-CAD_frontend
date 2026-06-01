@@ -3,6 +3,7 @@ import { triangulatePolygon, triangulateRibbon } from '@/adapters/DelaunayTriang
 import { offsetPolygon, unionPolygons, buildRoadPolygon } from '@/adapters/Clipper2DAdapter'
 import { buildQuadraticCenterLine, offsetCenterLine, approximateCurveLength } from '@/adapters/BezierJsAdapter'
 import type { Point2D, MeshData } from '@/types/road-network'
+import { buildMergedCoonsPatchMesh, type SubPatchCurves } from '@/services/coonsPatchBuilder'
 
 const geometryApi = {
   buildRoadMesh(
@@ -42,6 +43,15 @@ const geometryApi = {
 
   buildRoadPolygon(centerLine: Point2D[], halfWidth: number): Point2D[] {
     return buildRoadPolygon(centerLine, halfWidth)
+  },
+
+  /** FR2.2: 构建 Coons Patch 曲面网格 */
+  buildCoonsPatchMesh(
+    subPatchCurves: SubPatchCurves[],
+    uDiv: number = 8,
+    vDiv: number = 8,
+  ): MeshData {
+    return buildMergedCoonsPatchMesh(subPatchCurves, uDiv, vDiv)
   },
 }
 

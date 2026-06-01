@@ -77,6 +77,8 @@ import { useVehicleRenderer } from '@/composables/useVehicleRenderer'
 import { useCameraControls } from '@/composables/useCameraControls'
 import { useGizmoControls } from '@/composables/useGizmoControls'
 import { useNodeAdjustmentStore, type GizmoMode } from '@/stores/nodeAdjustmentStore'
+import { getTangentHandleWorldPosition, buildSubPatchCurves } from '@/services/tangentHandleService'
+import { getGeometryWorker } from '@/workers'
 import { useHeatmap } from '@/composables/useHeatmap'
 import { useFlightLines } from '@/composables/useFlightLines'
 import { buildFlightLines } from '@/services/flightLineService'
@@ -99,6 +101,7 @@ import {
   MoveVertexCommand,
   SetLaneArrowCommand,
   SetLaneConnectorCommand,
+  SetTangentDirectionCommand,
   SetTurnRestrictionCommand,
   UpgradeSegmentCommand,
   BatchDeleteCommand,
@@ -109,7 +112,7 @@ import { buildQuadraticCenterLine, approximateCurveLength } from '@/adapters/Bez
 import { smartSnap, buildViewTransform, type SnapResult, type GuideLine } from '@/services/snapService'
 import { healOnSegmentAdd, recalculateBoundary } from '@/services/topologyHealingService'
 import LaneArrowPicker from '@/components/panels/LaneArrowPicker.vue'
-import type { Lane, LaneConnector, Point2D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection, ElevationMode, DrawingMode, AngleAnnotation } from '@/types'
+import type { Lane, LaneConnector, Point2D, Point3D, RoadSegment, RoadNode, CrossSectionProfile, MeshData, TurnDirection, ElevationMode, DrawingMode, AngleAnnotation } from '@/types'
 import { SLOPE_LIMITS } from '@/types/road-network'
 import { calculateAngleAnnotation, segmentDirectionAtNode } from '@/services/angleAnnotationService'
 import { MeasurementCommand } from '@/commands/MeasurementCommand'
@@ -370,6 +373,19 @@ const isDraggingVertex = ref(false)
 const dragVertexNodeId = ref<string | null>(null)
 const dragVertexIndex = ref<number>(-1)
 const dragVertexStartPos = ref<Point2D | null>(null)
+
+// Tangent handles (FR2.2) — 3D handle arrows for surface blending
+const tangentHandleGeometry = new THREE.ConeGeometry(0.25, 0.8, 8)
+const tangentHandleMaterial = new THREE.MeshBasicMaterial({ color: 0x00ccff }) // cyan
+const tangentHandleActiveMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 }) // yellow when dragging
+const tangentLineMaterial = new THREE.LineBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 0.6 })
+const tangentHandleMeshes = new Map<string, THREE.Mesh>() // key: `${nodeId}:${handleIdx}`
+const tangentLineMeshes = new Map<string, THREE.Line>() // key: `${nodeId}:${handleIdx}`
+const isDraggingTangent = ref(false)
+const dragTangentNodeId = ref<string | null>(null)
+const dragTangentIndex = ref<number>(-1)
+const dragTangentStartDir = ref<Point3D | null>(null)
+const dragTangentStartLen = ref<number>(0)
 
 // Box selection state (BULLDOZER batch delete)
 const boxSelectActive = ref(false)
@@ -1073,6 +1089,9 @@ function updateNodeAdjustVisuals(): void {
       }
     }
   }
+
+  // FR2.2: 更新切线手柄可视化
+  updateTangentHandleVisuals()
 }
 
 function clearNodeAdjustState(): void {
@@ -1085,18 +1104,158 @@ function clearNodeAdjustState(): void {
       scene.remove(line)
       line.geometry.dispose()
     }
+    // FR2.2: tangent handles
+    for (const [, mesh] of tangentHandleMeshes) {
+      scene.remove(mesh)
+    }
+    for (const [, line] of tangentLineMeshes) {
+      scene.remove(line)
+      line.geometry.dispose()
+    }
   }
   nodeAdjustVertexMeshes.clear()
   nodeAdjustOutlineMeshes.clear()
+  tangentHandleMeshes.clear()
+  tangentLineMeshes.clear()
   isDraggingVertex.value = false
   dragVertexNodeId.value = null
   dragVertexIndex.value = -1
   dragVertexStartPos.value = null
+  isDraggingTangent.value = false
+  dragTangentNodeId.value = null
+  dragTangentIndex.value = -1
+  dragTangentStartDir.value = null
   // Detach Gizmo
   gizmoControls.detach()
   nodeAdjustStore.deactivateNode()
   gizmoDragNodeId.value = null
   gizmoDragStartPos.value = null
+}
+
+// ============================================================
+// FR2.2 切线手柄可视化与交互
+// ============================================================
+
+/** 更新切线手柄的 3D 可视化 */
+function updateTangentHandleVisuals(): void {
+  const scene = sceneRef.value
+  if (!scene) return
+
+  // 清除旧的手柄和连线
+  for (const [, mesh] of tangentHandleMeshes) {
+    scene.remove(mesh)
+  }
+  for (const [, line] of tangentLineMeshes) {
+    scene.remove(line)
+    line.geometry.dispose()
+  }
+  tangentHandleMeshes.clear()
+  tangentLineMeshes.clear()
+
+  // 只为选中节点显示切线手柄
+  const selectedIds = roadStore.selectedNodeIds
+  if (selectedIds.size === 0) return
+
+  for (const nodeId of selectedIds) {
+    const node = roadStore.getNode(nodeId)
+    if (!node || node.polygonVertices.length < 3) continue
+
+    const handles = nodeAdjustStore.getTangentHandles(nodeId)
+    if (handles.length === 0) continue
+
+    for (let i = 0; i < handles.length; i++) {
+      const handle = handles[i]
+      const vertex = node.polygonVertices[i]
+      if (!vertex) continue
+
+      // 手柄端点世界坐标
+      const tipPos = getTangentHandleWorldPosition(node, i)
+
+      // 创建手柄锥体
+      const cone = new THREE.Mesh(tangentHandleGeometry, tangentHandleMaterial)
+      cone.position.set(tipPos.x, tipPos.y, tipPos.z)
+      // 让锥体指向切线方向
+      const dir = new THREE.Vector3(handle.direction.x, handle.direction.y, handle.direction.z).normalize()
+      if (dir.length() > 0.01) {
+        cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)
+      }
+      cone.userData = { nodeId, handleIndex: i, type: 'tangentHandle' }
+      scene.add(cone)
+      tangentHandleMeshes.set(`${nodeId}:${i}`, cone)
+
+      // 创建连线（顶点 → 手柄端点）
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(vertex.x, node.elevation, vertex.y),
+        new THREE.Vector3(tipPos.x, tipPos.y, tipPos.z),
+      ])
+      const line = new THREE.Line(lineGeo, tangentLineMaterial)
+      scene.add(line)
+      tangentLineMeshes.set(`${nodeId}:${i}`, line)
+    }
+  }
+}
+
+/** 清除切线手柄视觉对象 */
+function clearTangentHandleVisuals(): void {
+  const scene = sceneRef.value
+  if (scene) {
+    for (const [, mesh] of tangentHandleMeshes) {
+      scene.remove(mesh)
+    }
+    for (const [, line] of tangentLineMeshes) {
+      scene.remove(line)
+      line.geometry.dispose()
+    }
+  }
+  tangentHandleMeshes.clear()
+  tangentLineMeshes.clear()
+}
+
+/** 射线检测切线手柄 */
+function pickTangentHandle(event: MouseEvent): { nodeId: string; handleIndex: number } | null {
+  const camera = cameraRef.value
+  if (!camera || !containerRef.value) return null
+  const rect = containerRef.value.getBoundingClientRect()
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+  raycaster.setFromCamera(pointer, camera)
+  const meshes = Array.from(tangentHandleMeshes.values())
+  const intersects = raycaster.intersectObjects(meshes, false)
+  if (intersects.length > 0) {
+    const obj = intersects[0].object
+    return {
+      nodeId: obj.userData.nodeId as string,
+      handleIndex: obj.userData.handleIndex as number,
+    }
+  }
+  return null
+}
+
+/** 重建选中节点的 Coons Patch 曲面 */
+async function rebuildIntersectionSurface(nodeId: string): Promise<void> {
+  const node = roadStore.getNode(nodeId)
+  if (!node || node.polygonVertices.length < 3) return
+
+  const handles = nodeAdjustStore.getTangentHandles(nodeId)
+  if (handles.length === 0) return
+
+  // 构造子 Patch 边界曲线
+  const subPatchCurves = buildSubPatchCurves(node)
+  if (subPatchCurves.length === 0) return
+
+  try {
+    const worker = getGeometryWorker()
+    const meshData = await worker.buildCoonsPatchMesh(subPatchCurves, 8, 8)
+
+    // 更新路口曲面 mesh
+    if (roadRenderer) {
+      roadRenderer.updateIntersectionSurface(nodeId, meshData)
+    }
+  } catch (err) {
+    console.error('[FR2.2] Coons Patch rebuild failed:', err)
+    // Fallback: 使用原有 Delaunay 平面
+    roadRenderer.updateIntersectionPolygon(nodeId, node.polygonVertices)
+  }
 }
 
 function pickNodeAdjustVertex(event: MouseEvent): { nodeId: string; vertexIndex: number } | null {
@@ -1119,7 +1278,28 @@ function pickNodeAdjustVertex(event: MouseEvent): { nodeId: string; vertexIndex:
 }
 
 function handleNodeAdjust(event: MouseEvent): void {
-  // First try to pick a vertex marker (for dragging)
+  // FR2.2: First try to pick a tangent handle (highest priority)
+  const tangentPick = pickTangentHandle(event)
+  if (tangentPick) {
+    const node = roadStore.getNode(tangentPick.nodeId)
+    if (!node) return
+    const handles = nodeAdjustStore.getTangentHandles(tangentPick.nodeId)
+    const handle = handles[tangentPick.handleIndex]
+    if (!handle) return
+    isDraggingTangent.value = true
+    dragTangentNodeId.value = tangentPick.nodeId
+    dragTangentIndex.value = tangentPick.handleIndex
+    dragTangentStartDir.value = { ...handle.direction }
+    dragTangentStartLen.value = handle.length
+    // Highlight active handle
+    const mesh = tangentHandleMeshes.get(`${tangentPick.nodeId}:${tangentPick.handleIndex}`)
+    if (mesh) mesh.material = tangentHandleActiveMaterial
+    cameraControls.state.isDragging = false
+    cameraControls.state.isOrbiting = false
+    return
+  }
+
+  // Then try to pick a vertex marker (for boundary dragging)
   const vertexPick = pickNodeAdjustVertex(event)
   if (vertexPick) {
     const node = roadStore.getNode(vertexPick.nodeId)
@@ -1288,6 +1468,56 @@ function onPointerMove(event: MouseEvent): void {
     if (node2) updateNodeAdjustOutline(dragVertexNodeId.value, node2)
     // Update intersection polygon mesh
     roadRenderer.updateIntersectionPolygon(dragVertexNodeId.value, updatedVertices)
+    return
+  }
+  // FR2.2: Tangent handle drag — update handle position in real time (preview only, no Worker)
+  if (isDraggingTangent.value && dragTangentNodeId.value && dragTangentIndex.value >= 0) {
+    const node = roadStore.getNode(dragTangentNodeId.value)
+    if (!node) return
+    const vertex = node.polygonVertices[dragTangentIndex.value]
+    if (!vertex) return
+
+    // Calculate new direction from vertex to mouse world position
+    const dx = world.x - vertex.x
+    const dz = world.y - vertex.y
+    const horizontalLen = Math.sqrt(dx * dx + dz * dz)
+    if (horizontalLen < 0.01) return
+
+    // Direction is normalized horizontal vector + vertical component
+    const newDir = { x: dx / horizontalLen, y: 0, z: dz / horizontalLen }
+    const newLen = Math.max(0.5, horizontalLen) // min length 0.5m
+
+    // Update store (in-memory only, no Worker recalc during drag)
+    nodeAdjustStore.setTangentDirection(dragTangentNodeId.value, dragTangentIndex.value, newDir, newLen)
+
+    // Update handle mesh position
+    const tipPos = getTangentHandleWorldPosition(node, dragTangentIndex.value)
+    const handleMesh = tangentHandleMeshes.get(`${dragTangentNodeId.value}:${dragTangentIndex.value}`)
+    if (handleMesh) {
+      handleMesh.position.set(tipPos.x, tipPos.y, tipPos.z)
+      const dir3 = new THREE.Vector3(newDir.x, newDir.y, newDir.z).normalize()
+      if (dir3.length() > 0.01) {
+        handleMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir3)
+      }
+    }
+
+    // Update line from vertex to handle
+    const lineKey = `${dragTangentNodeId.value}:${dragTangentIndex.value}`
+    const oldLine = tangentLineMeshes.get(lineKey)
+    if (oldLine) {
+      const scene = sceneRef.value
+      if (scene) {
+        scene.remove(oldLine)
+        oldLine.geometry.dispose()
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(vertex.x, node.elevation, vertex.y),
+          new THREE.Vector3(tipPos.x, tipPos.y, tipPos.z),
+        ])
+        const newLine = new THREE.Line(lineGeo, tangentLineMaterial)
+        scene.add(newLine)
+        tangentLineMeshes.set(lineKey, newLine)
+      }
+    }
     return
   }
   const snapped = snapPoint(world)
@@ -1598,6 +1828,54 @@ function onPointerUp(): void {
     dragVertexStartPos.value = null
     // Refresh visuals to reflect final state
     updateNodeAdjustVisuals()
+    return
+  }
+  // FR2.2: Tangent handle drag commit (pointerup → Lazy Evaluation)
+  if (isDraggingTangent.value) {
+    const nodeId = dragTangentNodeId.value
+    const handleIdx = dragTangentIndex.value
+    const startDir = dragTangentStartDir.value
+    const startLen = dragTangentStartLen.value
+    if (nodeId && handleIdx >= 0 && startDir) {
+      const handles = nodeAdjustStore.getTangentHandles(nodeId)
+      const curHandle = handles[handleIdx]
+      if (curHandle) {
+        // Check if direction actually changed
+        const dirChanged =
+          curHandle.direction.x !== startDir.x ||
+          curHandle.direction.y !== startDir.y ||
+          curHandle.direction.z !== startDir.z ||
+          curHandle.length !== startLen
+        if (dirChanged) {
+          // Execute command (will commit to RoadNode + trigger Worker rebuild)
+          const sessionId = editorStore.historySessionId
+          if (sessionId !== null) {
+            void historyStack.execute(
+              new SetTangentDirectionCommand(
+                nodeId,
+                handleIdx,
+                { ...curHandle.direction },
+                curHandle.length,
+              ),
+              sessionId,
+            ).then(() => {
+              // Worker rebuild Coons Patch surface
+              void rebuildIntersectionSurface(nodeId)
+            }).catch(() => {})
+          }
+        }
+      }
+    }
+    // Reset handle material
+    if (nodeId && handleIdx >= 0) {
+      const mesh = tangentHandleMeshes.get(`${nodeId}:${handleIdx}`)
+      if (mesh) mesh.material = tangentHandleMaterial
+    }
+    isDraggingTangent.value = false
+    dragTangentNodeId.value = null
+    dragTangentIndex.value = -1
+    dragTangentStartDir.value = null
+    updateTangentHandleVisuals()
     return
   }
   if (!isDragging.value) return
@@ -2467,6 +2745,11 @@ onBeforeUnmount(() => {
   nodeAdjustVertexMaterial.dispose()
   nodeAdjustSelectedVertexMaterial.dispose()
   nodeAdjustOutlineMaterial.dispose()
+  // FR2.2: tangent handle resources
+  tangentHandleGeometry.dispose()
+  tangentHandleMaterial.dispose()
+  tangentHandleActiveMaterial.dispose()
+  tangentLineMaterial.dispose()
   decalRenderer.dispose()
   cameraControls.detach()
   gizmoControls.dispose()
