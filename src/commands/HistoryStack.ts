@@ -7,7 +7,7 @@ export type HistorySessionId = number
 type HistoryChangeCallback = (pointer: number, length: number) => void
 type HistoryMutationCallback = () => void
 
-type HistoryOperation = (generation: number) => void
+type HistoryOperation = (generation: number) => void | Promise<void>
 
 export class HistoryStack {
   private stack: ICommand[] = []
@@ -51,8 +51,28 @@ export class HistoryStack {
   }
 
   execute(command: ICommand, sessionId: HistorySessionId): Promise<void> {
-    return this.enqueue(sessionId, (generation) => {
-      command.execute()
+    return this.enqueue(sessionId, async (generation) => {
+      try {
+        const result = command.execute()
+        // Support both sync and async execute()
+        if (result instanceof Promise) {
+          await result
+        }
+      } catch (executeError: unknown) {
+        // Auto-rollback: execute() failed after partial Store mutation
+        // Call undo() to revert any changes made before the failure
+        try {
+          command.undo()
+        } catch (undoError: unknown) {
+          // Undo itself failed — log but don't mask the original error.
+          // Store state may be inconsistent; user should be alerted.
+          console.error('[HistoryStack] Auto-rollback undo() also failed:', undoError)
+        }
+        // Re-throw so callers can surface the error to the user
+        throw executeError
+      }
+
+      // Execute succeeded — check generation before committing to stack
       if (generation !== this.generation) return
       this.stack.splice(this.pointer + 1)
       this.stack.push(command)
@@ -78,11 +98,24 @@ export class HistoryStack {
   }
 
   redo(sessionId: HistorySessionId): Promise<void> {
-    return this.enqueue(sessionId, (generation) => {
+    return this.enqueue(sessionId, async (generation) => {
       if (this.pointer >= this.stack.length - 1) return
       const nextPointer = this.pointer + 1
       const command = this.stack[nextPointer]
-      command.execute()
+      try {
+        const result = command.execute()
+        if (result instanceof Promise) {
+          await result
+        }
+      } catch (executeError: unknown) {
+        // Redo failed — auto-rollback
+        try {
+          command.undo()
+        } catch (undoError: unknown) {
+          console.error('[HistoryStack] Redo auto-rollback undo() failed:', undoError)
+        }
+        throw executeError
+      }
       if (generation !== this.generation) return
       this.pointer = nextPointer
       this.notify()
@@ -115,9 +148,9 @@ export class HistoryStack {
     operation: HistoryOperation,
   ): Promise<void> {
     const generation = this.generation
-    const run = (): void => {
+    const run = async (): Promise<void> => {
       if (!this.isSessionActive(sessionId) || generation !== this.generation) return
-      operation(generation)
+      await operation(generation)
     }
     const result = this.operationChain.then(run, run)
     this.operationChain = result.catch(() => undefined)
