@@ -218,7 +218,10 @@
 
       <section v-if="editor.panelState.propertiesTab === 'evaluation'" class="prop-group">
         <h3 class="prop-title">评估指标</h3>
-        <template v-if="evalStore.segmentMetrics.size === 0 && evalStore.results.size === 0">
+        <template v-if="simState === 'RUNNING' && evalStore.segmentMetrics.size === 0 && evalStore.results.size === 0">
+          <div class="eval-loading"><LoaderIcon :size="16" class="spin" /> 仿真运行中，正在采集数据…</div>
+        </template>
+        <template v-else-if="evalStore.segmentMetrics.size === 0 && evalStore.results.size === 0">
           <div class="val-ok">请先运行仿真以生成评估数据</div>
         </template>
         <template v-else>
@@ -305,11 +308,13 @@ import {
   ScrollTextIcon,
   Trash2Icon,
   ArrowUpIcon,
+  LoaderIcon,
 } from '@lucide/vue'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
+import { useSimulationStore } from '@/stores/simulationStore'
 import { historyStack, type HistorySessionId } from '@/commands/HistoryStack'
 import {
   DeleteSegmentCommand,
@@ -334,6 +339,7 @@ import type { Crosswalk, LaneRestriction, MarkingType, TurnRestriction } from '@
 const editor = useEditorStateStore()
 const road = useRoadNetworkStore()
 const rules = useTrafficRuleStore()
+const simStore = useSimulationStore()
 const { lastResult: valResult, runValidation } = useRuleValidation()
 
 interface TabDef { id: string; icon: Component; label: string; title: string }
@@ -362,6 +368,7 @@ const selectedLight = computed(() => {
 })
 
 const evalStore = useEvaluationStore()
+const simState = computed(() => simStore.state)
 
 const evalSelectedSegmentMetric = computed(() => {
   if (!selectedSegment.value) return null
@@ -802,6 +809,9 @@ function onRunValidation(): void {
 .val-run-btn { width: auto; padding: 5px 14px; }
 .val-summary { font-size: 12px; color: #aab2bf; }
 .val-ok { text-align: center; padding: 16px; color: #6cb6ff; font-size: 13px; }
+.eval-loading { display: flex; align-items: center; gap: 8px; padding: 16px; color: #8e94a0; font-size: 12px; }
+.eval-loading .spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .val-list { list-style: none; padding: 0; margin: 0; }
 .val-item { display: flex; align-items: flex-start; gap: 6px; padding: 5px 0; font-size: 11px; border-bottom: 1px dashed #2a2f3a; }
 .val-item.error .val-severity { color: #a13c3c; }

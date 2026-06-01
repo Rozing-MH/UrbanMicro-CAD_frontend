@@ -32,15 +32,15 @@
     </div>
 
     <div class="toolbar-section snap">
-      <label class="snap-toggle">
+      <label class="snap-toggle" title="网格吸附 (F5)">
         <input type="checkbox" :checked="editor.snapToGrid" @change="editor.toggleSnap()" />
         网格吸附
       </label>
-      <label class="snap-toggle">
+      <label class="snap-toggle" title="道路吸附 (F6)">
         <input type="checkbox" :checked="editor.snapToRoad" @change="editor.toggleRoadSnap()" />
         道路吸附
       </label>
-      <label class="snap-toggle">
+      <label class="snap-toggle" title="显示网格 (F7)">
         <input type="checkbox" :checked="editor.showGrid" @change="editor.toggleGrid()" />
         显示网格
       </label>

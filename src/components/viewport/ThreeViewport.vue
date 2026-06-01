@@ -2135,6 +2135,15 @@ function onKeyDown(event: KeyboardEvent): void {
   } else if (event.ctrlKey && event.shiftKey && (event.key === 'a' || event.key === 'A')) {
     event.preventDefault()
     roadStore.setElevationMode('ANARCHY')
+  } else if (event.key === 'F5' && !isEditableTarget(event)) {
+    event.preventDefault()
+    editorStore.toggleSnap()
+  } else if (event.key === 'F6' && !isEditableTarget(event)) {
+    event.preventDefault()
+    editorStore.toggleRoadSnap()
+  } else if (event.key === 'F7' && !isEditableTarget(event)) {
+    event.preventDefault()
+    editorStore.toggleGrid()
   } else if (event.key === 'PageUp' && editorStore.activeTool === 'ROAD_DRAW') {
     event.preventDefault()
     const ctx = roadStore.drawingContext
