@@ -119,31 +119,47 @@
       <div v-for="(pair, index) in sim.odMatrix.pairs" :key="index" class="od-row">
         <input :value="pair.fromNodeId" placeholder="起点节点" @change="onODChange(index, 'fromNodeId', $event)" />
         <input :value="pair.toNodeId" placeholder="终点节点" @change="onODChange(index, 'toNodeId', $event)" />
-        <input :value="pair.volumePerHour" type="number" min="0" step="10" @change="onODChange(index, 'volumePerHour', $event)" />
-        <button class="od-remove-btn" title="删除" @click="sim.removeODPair(index)">
+        <input :value="pair.volumePerHour" type="number" min="0" step="10" placeholder="流量/时" @change="onODChange(index, 'volumePerHour', $event)" />
+        <button class="od-remove-btn" title="删除" @click="onRemoveODPair(index)">
           <Trash2Icon :size="12" />
         </button>
       </div>
-      <button class="wide-btn" @click="sim.addODPair()">
+      <button class="wide-btn" @click="onAddODPair()">
         <PlusIcon :size="14" /> 添加 OD
       </button>
 
       <div class="section-title"><SettingsIcon :size="13" /> IDM / MOBIL</div>
       <label class="param-row">
-        <span>期望速度</span>
+        <span>期望速度 (m/s)</span>
         <input type="number" step="0.5" :value="sim.idmParams.desiredSpeed" @change="onIDMChange('desiredSpeed', $event)" />
       </label>
       <label class="param-row">
-        <span>安全时距</span>
+        <span>安全时距 (s)</span>
         <input type="number" step="0.1" :value="sim.idmParams.safeTimeHeadway" @change="onIDMChange('safeTimeHeadway', $event)" />
       </label>
       <label class="param-row">
-        <span>MOBIL 礼让</span>
+        <span>最小间距 (m)</span>
+        <input type="number" step="0.1" :value="sim.idmParams.minGap" @change="onIDMChange('minGap', $event)" />
+      </label>
+      <label class="param-row">
+        <span>最大加速度 (m/s²)</span>
+        <input type="number" step="0.1" :value="sim.idmParams.maxAcceleration" @change="onIDMChange('maxAcceleration', $event)" />
+      </label>
+      <label class="param-row">
+        <span>舒适减速度 (m/s²)</span>
+        <input type="number" step="0.1" :value="sim.idmParams.comfortableDeceleration" @change="onIDMChange('comfortableDeceleration', $event)" />
+      </label>
+      <label class="param-row">
+        <span>MOBIL 礼让因子</span>
         <input type="number" step="0.05" :value="sim.mobilParams.politenessFactor" @change="onMOBILChange('politenessFactor', $event)" />
       </label>
       <label class="param-row">
-        <span>安全减速度</span>
+        <span>安全减速度 (m/s²)</span>
         <input type="number" step="0.1" :value="sim.mobilParams.bSafe" @change="onMOBILChange('bSafe', $event)" />
+      </label>
+      <label class="param-row">
+        <span>变道阈值</span>
+        <input type="number" step="0.05" :value="sim.mobilParams.threshold" @change="onMOBILChange('threshold', $event)" />
       </label>
     </div>
   </aside>
@@ -179,6 +195,8 @@ import { registerCrossSectionProfiles, getProfileById } from '@/utils/roadProfil
 import type { CrossSectionProfile, LaneDef } from '@/types/road-network'
 import CrossSectionEditor from './CrossSectionEditor.vue'
 import type { IDMParams, MOBILParams, ODPair } from '@/types/simulation'
+import { historyStack } from '@/commands/HistoryStack'
+import { AddODPairCommand, RemoveODPairCommand, UpdateODPairCommand, SetIDMParamsCommand, SetMOBILParamsCommand } from '@/commands/simulationCommands'
 
 const editor = useEditorStateStore()
 const road = useRoadNetworkStore()
@@ -322,15 +340,33 @@ function eventString(ev: Event): string {
 
 function onODChange(index: number, field: keyof ODPair, ev: Event): void {
   const value = field === 'volumePerHour' ? eventNumber(ev) : eventString(ev)
-  sim.updateODPair(index, { [field]: value } as Partial<ODPair>)
+  const sessionId = editor.historySessionId
+  if (!sessionId) return
+  historyStack.execute(new UpdateODPairCommand(index, { [field]: value } as Partial<ODPair>), sessionId)
+}
+
+function onAddODPair(): void {
+  const sessionId = editor.historySessionId
+  if (!sessionId) return
+  historyStack.execute(new AddODPairCommand(), sessionId)
+}
+
+function onRemoveODPair(index: number): void {
+  const sessionId = editor.historySessionId
+  if (!sessionId) return
+  historyStack.execute(new RemoveODPairCommand(index), sessionId)
 }
 
 function onIDMChange(field: keyof IDMParams, ev: Event): void {
-  sim.setIDMParams({ [field]: eventNumber(ev) } as Partial<IDMParams>)
+  const sessionId = editor.historySessionId
+  if (!sessionId) return
+  historyStack.execute(new SetIDMParamsCommand({ [field]: eventNumber(ev) } as Partial<IDMParams>), sessionId)
 }
 
 function onMOBILChange(field: keyof MOBILParams, ev: Event): void {
-  sim.setMOBILParams({ [field]: eventNumber(ev) } as Partial<MOBILParams>)
+  const sessionId = editor.historySessionId
+  if (!sessionId) return
+  historyStack.execute(new SetMOBILParamsCommand({ [field]: eventNumber(ev) } as Partial<MOBILParams>), sessionId)
 }
 
 async function refreshProfiles(): Promise<void> {

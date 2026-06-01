@@ -1268,7 +1268,7 @@ const simApi = {
     idmParams: IDMParams,
     mobilParams: MOBILParams,
     vehicleMix: VehicleMixConfig,
-    sharedBuffer: SharedArrayBuffer,
+    sharedBuffer: SharedArrayBuffer | ArrayBuffer,
   ): void {
     ctx.topology = topology
     ctx.rules = rules

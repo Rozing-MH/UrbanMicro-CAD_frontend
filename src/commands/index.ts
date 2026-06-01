@@ -29,3 +29,11 @@ export type {
 } from './roadCommands'
 export { MeasurementCommand } from './MeasurementCommand'
 export type { MeasurementResult } from './MeasurementCommand'
+export {
+  AddODPairCommand,
+  RemoveODPairCommand,
+  UpdateODPairCommand,
+  SetIDMParamsCommand,
+  SetMOBILParamsCommand,
+  SetVehicleMixCommand,
+} from './simulationCommands'

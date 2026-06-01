@@ -24,6 +24,23 @@ import {
 } from '@/types/simulation'
 import { storeEventBus } from '@/stores/storeEventBus'
 
+/** Default timeout for Worker RPC calls (ms) */
+const WORKER_RPC_TIMEOUT = 30_000
+
+/**
+ * Wrap a Worker RPC promise with a timeout guard.
+ * Rejects with a descriptive error if the Worker doesn't respond in time.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Worker ${label} 超时 (${ms}ms)`)), ms)
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
+
 export type SimState = 'IDLE' | 'RUNNING' | 'PAUSED' | 'FINISHED'
 
 export const useSimulationStore = defineStore('simulation', () => {
@@ -58,7 +75,10 @@ export const useSimulationStore = defineStore('simulation', () => {
     laneMetrics.value.length > 0 ? laneMetrics.value : [],
   )
 
-  let sharedBuffer: SharedArrayBuffer | null = null
+  /** Whether SharedArrayBuffer is available (requires COOP/COEP headers) */
+  const sharedBufferSupported = typeof SharedArrayBuffer !== 'undefined'
+
+  let sharedBuffer: SharedArrayBuffer | ArrayBuffer | null = null
   let vehicleView: Float32Array | null = null
   let worker: Remote<SimulationWorkerApi> | null = null
   let lastTickAt = 0
@@ -68,14 +88,23 @@ export const useSimulationStore = defineStore('simulation', () => {
     simulatedDuration.value > 0 ? currentTime.value / simulatedDuration.value : 0,
   )
 
-  function initSharedBuffer(): SharedArrayBuffer {
+  /**
+   * Initialize the vehicle buffer.
+   * Uses SharedArrayBuffer when available (zero-copy Worker→main transfer),
+   * falls back to a regular ArrayBuffer (Worker copies data each tick).
+   */
+  function initSharedBuffer(): SharedArrayBuffer | ArrayBuffer {
     const byteLength = MAX_VEHICLES * VEHICLE_BUFFER_STRIDE * 4
-    sharedBuffer = new SharedArrayBuffer(byteLength)
+    if (sharedBufferSupported) {
+      sharedBuffer = new SharedArrayBuffer(byteLength)
+    } else {
+      sharedBuffer = new ArrayBuffer(byteLength)
+    }
     vehicleView = new Float32Array(sharedBuffer)
     return sharedBuffer
   }
 
-  function getSharedBuffer(): SharedArrayBuffer | null {
+  function getSharedBuffer(): SharedArrayBuffer | ArrayBuffer | null {
     return sharedBuffer
   }
 
@@ -91,47 +120,76 @@ export const useSimulationStore = defineStore('simulation', () => {
     if (!sharedBuffer) initSharedBuffer()
     if (!sharedBuffer) return
     worker = getSimulationWorker()
-    await worker.init(
-      topology,
-      rules,
-      odMatrix.value,
-      idmParams.value,
-      mobilParams.value,
-      vehicleMix.value,
-      sharedBuffer,
-    )
-    await worker.start()
-    state.value = 'RUNNING'
-    lastTickAt = performance.now()
-    storeEventBus.emit('simulation:started', {})
-    storeEventBus.emit('simulation:state-changed', { running: true })
+    try {
+      await withTimeout(
+        worker.init(
+          topology,
+          rules,
+          odMatrix.value,
+          idmParams.value,
+          mobilParams.value,
+          vehicleMix.value,
+          sharedBuffer as SharedArrayBuffer,
+        ),
+        WORKER_RPC_TIMEOUT,
+        'init',
+      )
+      await withTimeout(worker.start(), WORKER_RPC_TIMEOUT, 'start')
+      state.value = 'RUNNING'
+      lastTickAt = performance.now()
+      storeEventBus.emit('simulation:started', {})
+      storeEventBus.emit('simulation:state-changed', { running: true })
+    } catch (err) {
+      // Roll back to IDLE on init/start failure
+      state.value = 'IDLE'
+      storeEventBus.emit('simulation:state-changed', { running: false })
+      throw err
+    }
   }
 
   async function pause(): Promise<void> {
-    await worker?.pause()
-    state.value = 'PAUSED'
-    storeEventBus.emit('simulation:paused', {})
-    storeEventBus.emit('simulation:state-changed', { running: false })
+    try {
+      await withTimeout(worker?.pause() ?? Promise.resolve(), WORKER_RPC_TIMEOUT, 'pause')
+      state.value = 'PAUSED'
+      storeEventBus.emit('simulation:paused', {})
+      storeEventBus.emit('simulation:state-changed', { running: false })
+    } catch (err) {
+      // On pause failure, still set state to PAUSED to prevent runaway simulation
+      state.value = 'PAUSED'
+      storeEventBus.emit('simulation:state-changed', { running: false })
+      throw err
+    }
   }
 
   async function tick(now = performance.now()): Promise<SimulationFrame | null> {
     if (state.value !== 'RUNNING' || !worker) return null
     const dt = Math.min(0.1, Math.max(0.001, ((now - lastTickAt) / 1000) * timeScale.value))
     lastTickAt = now
-    const frame = await worker.tick(dt)
-    currentTime.value = frame.time
-    vehicleCount.value = frame.vehicleCount
-    stats.value = frame.stats
-    if (frame.laneMetrics.length > 0) {
-      laneMetrics.value = frame.laneMetrics
-      storeEventBus.emit('simulation:metrics-updated', { laneMetrics: frame.laneMetrics })
+    try {
+      const frame = await withTimeout(worker.tick(dt), WORKER_RPC_TIMEOUT, 'tick')
+      currentTime.value = frame.time
+      vehicleCount.value = frame.vehicleCount
+      stats.value = frame.stats
+      if (frame.laneMetrics.length > 0) {
+        laneMetrics.value = frame.laneMetrics
+        storeEventBus.emit('simulation:metrics-updated', { laneMetrics: frame.laneMetrics })
+      }
+      storeEventBus.emit('simulation:frame-updated', { frameData: frame })
+      return frame
+    } catch (err) {
+      // On tick failure, pause the simulation to prevent cascading errors
+      state.value = 'PAUSED'
+      storeEventBus.emit('simulation:state-changed', { running: false })
+      throw err
     }
-    storeEventBus.emit('simulation:frame-updated', { frameData: frame })
-    return frame
   }
 
   async function stop(): Promise<void> {
-    await worker?.reset()
+    try {
+      await withTimeout(worker?.reset() ?? Promise.resolve(), WORKER_RPC_TIMEOUT, 'reset')
+    } catch {
+      // Swallow stop errors — we're resetting anyway
+    }
     reset()
     storeEventBus.emit('simulation:stopped', {})
     storeEventBus.emit('simulation:state-changed', { running: false })
