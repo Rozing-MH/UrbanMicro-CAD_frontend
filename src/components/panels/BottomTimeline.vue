@@ -45,7 +45,7 @@
           <SignalIcon :size="13" /> LOS
         </button>
         <button class="view-btn" :class="{ active: evalStore.flightLineVisible }" title="OD 轨迹飞线" @click="evalStore.toggleFlightLines()">
-          <NavigationIcon :size="13" /> 飞线
+          <NavigationIcon :size="13" /> OD 轨迹
         </button>
         <button class="view-btn" :class="{ active: evalStore.evalMode === 'NONE' }" title="隐藏评估视图" @click="setHiddenView">
           <EyeOffIcon :size="13" /> 隐藏
