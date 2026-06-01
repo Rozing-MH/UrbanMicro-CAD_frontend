@@ -65,6 +65,7 @@ import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { historyStack } from '@/commands/HistoryStack'
+import { projectApi } from '@/api/projectApi'
 import { disposeWorkers } from '@/workers'
 
 const route = useRoute()
@@ -77,6 +78,7 @@ const sim = useSimulationStore()
 
 const loading = ref(true)
 const loadError = ref('')
+const saving = ref(false)
 let isEditorUnmounted = false
 
 function resetHistoryState(): void {
@@ -118,6 +120,7 @@ onMounted(async () => {
   } finally {
     if (!isEditorUnmounted) loading.value = false
   }
+  window.addEventListener('keydown', onGlobalKeyDown)
 })
 
 onBeforeRouteLeave((_to, _from, next) => {
@@ -132,6 +135,7 @@ onBeforeRouteLeave((_to, _from, next) => {
 
 onBeforeUnmount(() => {
   isEditorUnmounted = true
+  window.removeEventListener('keydown', onGlobalKeyDown)
   editor.dismissNotification()
   disposeWorkers()
   road.clear()
@@ -151,6 +155,40 @@ function notificationLabel(type: NotificationType): string {
     success: '完成',
   }
   return labels[type]
+}
+
+async function onSave(): Promise<void> {
+  if (!project.currentProject || saving.value) return
+  saving.value = true
+  try {
+    const topology = {
+      nodes: Array.from(road.nodes.values()),
+      segments: Array.from(road.segments.values()),
+      lanes: Array.from(road.lanes.values()),
+      laneArrows: Array.from(road.laneArrows.values()),
+      halfEdges: Array.from(road.halfEdges.values()),
+      version: road.topologyVersion,
+    }
+    await projectApi.save(project.currentProject.id, {
+      meta: project.currentProject,
+      topology,
+      rules: rules.serialize(sim.odMatrix, sim.vehicleMix),
+      odMatrix: sim.odMatrix,
+    })
+    project.markSaved()
+    editor.showNotification({ type: 'success', message: '项目已保存', durationMs: 2500 })
+  } catch (err) {
+    editor.setError(err instanceof Error ? err.message : '保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+function onGlobalKeyDown(event: KeyboardEvent): void {
+  if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+    event.preventDefault()
+    void onSave()
+  }
 }
 
 function backToDashboard(): void {

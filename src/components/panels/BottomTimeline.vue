@@ -32,22 +32,22 @@
       </div>
 
       <div class="view-switch">
-        <button class="view-btn" :class="{ active: evalStore.evalMode === 'DENSITY' }" @click="setEvalDensity">
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'DENSITY' }" title="流量热力图" @click="setEvalDensity">
           <BarChart3Icon :size="13" /> 流量
         </button>
-        <button class="view-btn" :class="{ active: evalStore.evalMode === 'SPEED' }" @click="setEvalSpeed">
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'SPEED' }" title="速度热力图" @click="setEvalSpeed">
           <GaugeIcon :size="13" /> 速度
         </button>
-        <button class="view-btn" :class="{ active: evalStore.evalMode === 'DELAY' }" @click="setEvalDelay">
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'DELAY' }" title="延误热力图" @click="setEvalDelay">
           <ClockIcon :size="13" /> 延误
         </button>
-        <button class="view-btn" :class="{ active: evalStore.evalMode === 'LOS' }" @click="setEvalLOS">
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'LOS' }" title="服务水平评级" @click="setEvalLOS">
           <SignalIcon :size="13" /> LOS
         </button>
-        <button class="view-btn" :class="{ active: evalStore.flightLineVisible }" @click="evalStore.toggleFlightLines()">
+        <button class="view-btn" :class="{ active: evalStore.flightLineVisible }" title="OD 轨迹飞线" @click="evalStore.toggleFlightLines()">
           <NavigationIcon :size="13" /> 飞线
         </button>
-        <button class="view-btn" :class="{ active: evalStore.evalMode === 'NONE' }" @click="setHiddenView">
+        <button class="view-btn" :class="{ active: evalStore.evalMode === 'NONE' }" title="隐藏评估视图" @click="setHiddenView">
           <EyeOffIcon :size="13" /> 隐藏
         </button>
       </div>
@@ -66,6 +66,10 @@
     </div>
 
     <div v-show="editor.panelState.bottomPanelOpen" class="stats-row">
+      <template v-if="sim.state === 'IDLE'">
+        <div class="stats-empty">点击 ▶ 开始仿真以查看统计数据</div>
+      </template>
+      <template v-else>
       <div class="stat">
         <div class="stat-label"><CarIcon :size="12" /> 在线车辆</div>
         <div class="stat-value">{{ sim.vehicleCount }}</div>
@@ -102,6 +106,7 @@
       >
         <DownloadIcon :size="13" /> CSV
       </button>
+      </template>
     </div>
   </footer>
 </template>
@@ -300,6 +305,7 @@ function setHiddenView(): void {
 .stat { min-width: 70px; }
 .stat-label { display: flex; align-items: center; gap: 3px; font-size: 11px; color: #8e94a0; }
 .stat-value { font-size: 16px; font-weight: 600; color: #d8dde6; margin-top: 2px; }
+.stats-empty { font-size: 12px; color: #6a7180; padding: 6px 0; }
 .los-grade { font-family: ui-monospace, Menlo, Consolas, monospace; padding: 1px 6px; border-radius: 3px; display: inline-block; }
 .los-grade[data-grade='A'] { background: #2ecc71; color: #fff; }
 .los-grade[data-grade='B'] { background: #58c177; color: #fff; }

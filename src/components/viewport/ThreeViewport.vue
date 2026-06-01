@@ -2051,6 +2051,7 @@ const TOOL_KEY_MAP: Record<string, ToolMode> = {
   l: 'LANE_CONNECTOR',
   r: 'LANE_RESTRICTION',
   a: 'LANE_ARROW',
+  g: 'TURN_RESTRICTION',
   o: 'OD_MARKER',
   m: 'MEASURE',
   h: 'PAN',
@@ -2148,6 +2149,31 @@ function onKeyDown(event: KeyboardEvent): void {
     event.preventDefault()
     const nextMode: Record<DrawingMode, DrawingMode> = { STRAIGHT: 'CURVE', CURVE: 'FREE', FREE: 'STRAIGHT' }
     roadStore.setDrawingMode(nextMode[roadStore.drawingContext.mode])
+  } else if ((event.key === 'Delete' || event.key === 'Backspace') && !isEditableTarget(event)) {
+    // Delete selected segment
+    event.preventDefault()
+    const selectedSegId = Array.from(roadStore.selectedSegmentIds)[0]
+    if (selectedSegId) {
+      const sessionId = editorStore.historySessionId
+      if (sessionId !== null) {
+        void historyStack.execute(new DeleteSegmentCommand(selectedSegId), sessionId).catch((err: unknown) => {
+          editorStore.setError(err instanceof Error ? err.message : '删除失败')
+        })
+      }
+    }
+  } else if (editorStore.activeTool === 'NODE_ADJUST' && !event.ctrlKey && !event.metaKey && !event.altKey && !isEditableTarget(event)) {
+    // W/E/R Gizmo mode shortcuts (only in NODE_ADJUST tool)
+    const gizmoKey = event.key.toLowerCase()
+    if (gizmoKey === 'w') {
+      event.preventDefault()
+      nodeAdjustStore.setGizmoMode('TRANSLATE')
+    } else if (gizmoKey === 'e') {
+      event.preventDefault()
+      nodeAdjustStore.setGizmoMode('ROTATE')
+    } else if (gizmoKey === 'r') {
+      event.preventDefault()
+      nodeAdjustStore.setGizmoMode('SCALE')
+    }
   } else if (!event.ctrlKey && !event.metaKey && !event.altKey && !isEditableTarget(event)) {
     // Tool-switching shortcuts (only when not in input/textarea)
     const toolKey = TOOL_KEY_MAP[event.key.toLowerCase()]

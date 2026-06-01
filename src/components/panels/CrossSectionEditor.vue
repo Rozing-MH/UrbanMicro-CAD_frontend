@@ -13,7 +13,7 @@
           class="lane-strip"
           :class="{ selected: selectedIndex === i }"
           :style="laneStyle(lane)"
-          :title="`${lane.direction} ${lane.type} ${lane.width}m`"
+          :title="`${laneDirectionLabel(lane.direction)} ${laneTypeLabel(lane.type)} ${lane.width}m`"
           @click="onSelectLane(i)"
         ></div>
       </div>
@@ -142,6 +142,15 @@ const canApply = computed(() => workingLanes.value.length >= 2 && editorStore.ge
 function laneStyle(lane: LaneDef): Record<string, string> {
   const palette: Record<string, string> = { CAR: '#4a5160', BIKE: '#3b8d56', BUS: '#a13c3c', TRAM: '#5c5750' }
   return { flex: String(lane.width), background: palette[lane.type] ?? '#4a5160' }
+}
+
+function laneDirectionLabel(d: LaneDirection): string {
+  return d === 'FORWARD' ? '正向' : d === 'BACKWARD' ? '反向' : '双向'
+}
+
+function laneTypeLabel(t: LaneType): string {
+  const labels: Record<string, string> = { CAR: '机动车', BUS: '公交', BIKE: '自行车', TRAM: '有轨电车', TRUCK: '货车' }
+  return labels[t] ?? t
 }
 
 function onSelectLane(index: number): void {

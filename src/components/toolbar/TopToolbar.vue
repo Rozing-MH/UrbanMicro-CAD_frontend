@@ -87,23 +87,23 @@
     </div>
 
     <div class="toolbar-section actions">
-      <button class="action-btn validate-btn" @click="onValidateRules">
+      <button class="action-btn validate-btn" title="检查规则" @click="onValidateRules">
         <ShieldCheckIcon :size="14" /> 检查规则
       </button>
-      <button class="action-btn" :disabled="saving" @click="onSave">
+      <button class="action-btn" :disabled="saving" title="保存项目 (Ctrl+S)" @click="onSave">
         <SaveIcon :size="14" />
         {{ saving ? '保存中…' : '保存' }}
       </button>
-      <button class="action-btn secondary" @click="showSnapshotDialog = true">
+      <button class="action-btn secondary" title="历史版本" @click="showSnapshotDialog = true">
         <HistoryIcon :size="14" /> 历史版本
       </button>
-      <button class="action-btn secondary" @click="onImport">
+      <button class="action-btn secondary" title="导入工程" @click="onImport">
         <UploadIcon :size="14" /> 导入
       </button>
-      <button class="action-btn secondary" @click="onExport">
+      <button class="action-btn secondary" title="导出工程" @click="onExport">
         <DownloadIcon :size="14" /> 导出
       </button>
-      <button class="action-btn" @click="onExit">
+      <button class="action-btn" title="退出编辑器" @click="onExit">
         <LogOutIcon :size="14" /> 退出
       </button>
     </div>
@@ -187,7 +187,7 @@ const toolList: ToolDef[] = [
   { id: 'LANE_CONNECTOR',   icon: RouteIcon,            label: '车道',   title: '车道连接 (L)' },
   { id: 'LANE_RESTRICTION', icon: BanIcon,              label: '限制',   title: '车道限制与标线 (R)' },
   { id: 'LANE_ARROW',       icon: CornerUpRightIcon,    label: '箭头',   title: '车道转向箭头 (A)' },
-  { id: 'TURN_RESTRICTION', icon: NavigationIcon,       label: '转向',   title: '转向限制' },
+  { id: 'TURN_RESTRICTION', icon: NavigationIcon,       label: '转向',   title: '转向限制 (G)' },
   { id: 'OD_MARKER',        icon: MapPinIcon,           label: 'OD',     title: 'OD 标记 (O)' },
   { id: 'MEASURE',          icon: RulerIcon,            label: '测量',   title: '距离测量 (M)' },
   { id: 'PAN',              icon: HandIcon,             label: '平移',   title: '平移视图 (H)' },
@@ -202,16 +202,16 @@ const viewModes: ViewModeDef[] = [
 
 interface DrawModeDef { id: 'STRAIGHT' | 'CURVE' | 'FREE'; label: string; title: string }
 const drawModes: DrawModeDef[] = [
-  { id: 'STRAIGHT', label: '直线', title: '直线绘路' },
-  { id: 'CURVE', label: '曲线', title: '二次贝塞尔曲线绘路 (C)' },
-  { id: 'FREE', label: '自由', title: '自由绘路（无角度约束）' },
+  { id: 'STRAIGHT', label: '直线', title: '直线绘路 (C 切换)' },
+  { id: 'CURVE', label: '曲线', title: '二次贝塞尔曲线绘路 (C 切换)' },
+  { id: 'FREE', label: '自由', title: '自由绘路（无角度约束）(C 切换)' },
 ]
 
 interface GizmoModeDef { id: GizmoMode; icon: Component; label: string; title: string }
 const gizmoModes: GizmoModeDef[] = [
-  { id: 'TRANSLATE', icon: MoveIcon,      label: '平移', title: '平移模式' },
-  { id: 'ROTATE',    icon: RotateCwIcon,  label: '旋转', title: '旋转模式' },
-  { id: 'SCALE',     icon: Maximize2Icon, label: '缩放', title: '缩放模式' },
+  { id: 'TRANSLATE', icon: MoveIcon,      label: '平移', title: '平移模式 (W)' },
+  { id: 'ROTATE',    icon: RotateCwIcon,  label: '旋转', title: '旋转模式 (E)' },
+  { id: 'SCALE',     icon: Maximize2Icon, label: '缩放', title: '缩放模式 (R)' },
 ]
 
 async function onUndo(): Promise<void> {

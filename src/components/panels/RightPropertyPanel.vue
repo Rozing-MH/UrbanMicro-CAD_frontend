@@ -73,7 +73,7 @@
         <ul class="lane-list">
           <li v-for="(lane, i) in selectedSegment.profile.lanes" :key="lane.id" class="lane-row">
             <span class="lane-idx">{{ i + 1 }}</span>
-            <span class="lane-type">{{ lane.type }}</span>
+            <span class="lane-type">{{ laneTypeLabel(lane.type) }}</span>
             <span class="lane-dir">{{ directionLabel(lane.direction) }}</span>
             <span class="lane-w">{{ lane.width.toFixed(1) }} m</span>
           </li>
@@ -470,7 +470,12 @@ function toggleCollapse(): void {
 }
 
 function directionLabel(d: LaneDirection): string {
-  return d === 'FORWARD' ? '→' : d === 'BACKWARD' ? '←' : '↔'
+  return d === 'FORWARD' ? '→ 正向' : d === 'BACKWARD' ? '← 反向' : '↔ 双向'
+}
+
+function laneTypeLabel(t: string): string {
+  const labels: Record<string, string> = { CAR: '机动车', BUS: '公交', BIKE: '自行车', TRAM: '有轨电车', TRUCK: '货车' }
+  return labels[t] ?? t
 }
 
 function isCurrentHistorySession(sessionId: HistorySessionId): boolean {
