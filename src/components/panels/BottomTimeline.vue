@@ -106,6 +106,17 @@
       >
         <DownloadIcon :size="13" /> CSV
       </button>
+      <button
+        v-if="evalStore.segmentMetrics.size > 0 || evalStore.results.size > 0"
+        class="export-btn"
+        :class="{ 'is-loading': evalStore.isComputing }"
+        :disabled="evalStore.isComputing"
+        title="导出评估报告 (PDF)"
+        @click="onExportPDF"
+      >
+        <LoaderIcon v-if="evalStore.isComputing" :size="13" class="spin" />
+        <FileTextIcon v-else :size="13" /> PDF
+      </button>
       </template>
     </div>
   </footer>
@@ -131,18 +142,35 @@ import {
   UsersIcon,
   TrendingUpIcon,
   DownloadIcon,
+  FileTextIcon,
+  LoaderIcon,
 } from '@lucide/vue'
 import { useSimulationStore } from '@/stores/simulationStore'
 import { useEditorStateStore } from '@/stores/editorStateStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
 import { useRoadNetworkStore } from '@/stores/roadNetworkStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
+import { useProjectStore } from '@/stores/projectStore'
 
 const sim = useSimulationStore()
 const editor = useEditorStateStore()
 const evalStore = useEvaluationStore()
 const road = useRoadNetworkStore()
 const rules = useTrafficRuleStore()
+const project = useProjectStore()
+
+async function onExportPDF(): Promise<void> {
+  const projectId = project.currentProject?.id
+  if (!projectId) return
+  const blob = await evalStore.exportPDF(projectId)
+  if (!blob) return
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `评估报告_${projectId}.pdf`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 const stateLabel = computed(() => {
   switch (sim.state) {
@@ -320,4 +348,8 @@ function setHiddenView(): void {
   border-radius: 3px; cursor: pointer; font-size: 11px; white-space: nowrap;
 }
 .export-btn:hover { background: #313847; color: #fff; }
+.export-btn.is-loading { opacity: 0.6; cursor: wait; }
+.export-btn:disabled { pointer-events: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; display: inline-block; }
 </style>

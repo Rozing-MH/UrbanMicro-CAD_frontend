@@ -43,6 +43,12 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
     metalness: 0.1,
   })
 
+  // 高亮材质（复用，避免每次 highlightSegment 创建新实例泄漏）
+  const highlightMaterial = new THREE.MeshStandardMaterial({
+    color: 0x4a90e2,
+    roughness: 0.85,
+  })
+
   const intersectionMaterial = new THREE.MeshStandardMaterial({
     color: 0x3a3a3a,
     roughness: 0.85,
@@ -186,6 +192,9 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
     }
   }
 
+  // 预览线材质（复用，避免每次 showPreview 创建新实例泄漏）
+  const previewLineMaterial = new THREE.LineBasicMaterial({ color: 0x00ffaa })
+
   function showPreview(start: { x: number; y: number }, end: { x: number; y: number }): void {
     if (!scene.value) return
     hidePreview()
@@ -194,8 +203,7 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
       new THREE.Vector3(end.x, 0.5, end.y),
     ]
     const geo = new THREE.BufferGeometry().setFromPoints(points)
-    const mat = new THREE.LineBasicMaterial({ color: 0x00ffaa })
-    const line = new THREE.Line(geo, mat)
+    const line = new THREE.Line(geo, previewLineMaterial)
     scene.value.add(line)
     previewLine.line = line
   }
@@ -255,10 +263,7 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
   function highlightSegment(id: string | null): void {
     for (const [segId, mesh] of segmentMeshes) {
       if (segId === id) {
-        (mesh.material as THREE.MeshStandardMaterial) = new THREE.MeshStandardMaterial({
-          color: 0x4a90e2,
-          roughness: 0.85,
-        })
+        mesh.material = highlightMaterial
       } else {
         mesh.material = roadMaterial
       }
@@ -299,6 +304,12 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
     const existing = trafficLightGroups.get(nodeId)
     if (existing) {
       scene.value.remove(existing)
+      // 释放子 mesh 的 geometry（共享 geometry 不在此释放，在 dispose 中统一释放）
+      existing.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose()
+        }
+      })
       trafficLightGroups.delete(nodeId)
     }
   }
@@ -338,21 +349,33 @@ export function useRoadRenderer(scene: Ref<THREE.Scene | null>) {
     }
     for (const group of trafficLightGroups.values()) {
       scene.value.remove(group)
+      group.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose()
+        }
+      })
     }
     trafficLightGroups.clear()
     hidePreview()
     segmentMeshes.clear()
     nodeMarkers.clear()
     intersectionMeshes.clear()
+    // 共享 Geometry
     poleGeometry.dispose()
     housingGeometry.dispose()
     lampGeometry.dispose()
+    // 共享 Material
     poleMaterial.dispose()
     housingMaterial.dispose()
     lampOffMaterial.dispose()
     lampRedMaterial.dispose()
     lampYellowMaterial.dispose()
     lampGreenMaterial.dispose()
+    roadMaterial.dispose()
+    intersectionMaterial.dispose()
+    nodeMaterial.dispose()
+    highlightMaterial.dispose()
+    previewLineMaterial.dispose()
   }
 
   return {

@@ -44,9 +44,9 @@
         <input type="checkbox" :checked="editor.showGrid" @change="editor.toggleGrid()" />
         显示网格
       </label>
-      <label class="snap-toggle">
+      <label class="snap-toggle" title="连续绘制 (Q)">
         <input type="checkbox" :checked="editor.continuousDrawing" @change="editor.toggleContinuousDrawing()" />
-        连续绘制
+        连续绘制 (Q)
       </label>
       <div v-if="editor.activeTool === 'ROAD_DRAW'" class="draw-mode-group">
         <button

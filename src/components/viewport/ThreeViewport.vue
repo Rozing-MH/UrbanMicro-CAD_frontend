@@ -91,6 +91,7 @@ import { useSimulationStore } from '@/stores/simulationStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
 import { useTrafficRuleStore } from '@/stores/trafficRuleStore'
 import { useCrossSectionEditorStore } from '@/stores/crossSectionEditorStore'
+import { storeEventBus } from '@/stores/storeEventBus'
 import { historyStack, type HistorySessionId } from '@/commands/HistoryStack'
 import {
   DrawRoadCommand,
@@ -2294,6 +2295,50 @@ function syncRendererWithStore(): void {
   decalRenderer.syncAllDecals()
 }
 
+/**
+ * 处理 scene:mesh-rebuild-needed 事件。
+ * 加载项目/模板/快照后，store 中的路段没有 meshData（不包含在序列化格式中），
+ * 需要异步调用 Worker 为每条路段重新构建 geometry。
+ */
+async function onMeshRebuildNeeded(): Promise<void> {
+  // 先用 fallback geometry 让场景立即可见
+  syncRendererWithStore()
+
+  // 异步为每条没有 meshData 的路段构建精确 geometry
+  const segmentsWithoutMesh: RoadSegment[] = []
+  for (const seg of roadStore.segments.values()) {
+    if (!seg.meshData) segmentsWithoutMesh.push(seg)
+  }
+
+  for (const seg of segmentsWithoutMesh) {
+    try {
+      const meshData = await buildSegmentGeometry(
+        seg.centerLine,
+        seg.profile,
+        seg.elevation.startZ,
+      )
+      roadStore.updateSegment(seg.id, { meshData })
+      // 直接更新 renderer 中的 mesh geometry
+      const existingMesh = roadRenderer.segmentMeshes.get(seg.id)
+      if (existingMesh) {
+        const oldGeo = existingMesh.geometry
+        existingMesh.geometry = new THREE.BufferGeometry()
+        existingMesh.geometry.setAttribute('position', new THREE.BufferAttribute(meshData.positions, 3))
+        existingMesh.geometry.setAttribute('normal', new THREE.BufferAttribute(meshData.normals, 3))
+        existingMesh.geometry.setAttribute('uv', new THREE.BufferAttribute(meshData.uvs, 2))
+        existingMesh.geometry.setIndex(new THREE.BufferAttribute(meshData.indices, 1))
+        oldGeo.dispose()
+      }
+    } catch {
+      // fallback geometry 已在 syncRendererWithStore 中设置，无需额外处理
+    }
+  }
+
+  // 重建路口多边形和贴花
+  updateTrafficLightRender()
+  decalRenderer.syncAllDecals()
+}
+
 function onContextMenu(event: MouseEvent): void {
   event.preventDefault()
   roadStore.cancelDrawing()
@@ -2472,6 +2517,11 @@ function onKeyDown(event: KeyboardEvent): void {
       } else {
         editorStore.setActiveTool(toolKey)
       }
+      // Q 键切换连续绘制
+      if (event.key.toLowerCase() === 'q') {
+        event.preventDefault()
+        editorStore.toggleContinuousDrawing()
+      }
     }
   }
 }
@@ -2630,6 +2680,7 @@ onMounted(() => {
   containerRef.value?.addEventListener('contextmenu', onContextMenu)
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('keyup', onKeyUp)
+  storeEventBus.on('scene:mesh-rebuild-needed', onMeshRebuildNeeded)
   syncRendererWithStore()
   renderer.startRenderLoop(() => {
     if (
@@ -2721,6 +2772,7 @@ onBeforeUnmount(() => {
   containerRef.value?.removeEventListener('contextmenu', onContextMenu)
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('keyup', onKeyUp)
+  storeEventBus.off('scene:mesh-rebuild-needed', onMeshRebuildNeeded)
   clearSnapVisuals()
   snapHighlightGeometry.dispose()
   snapHighlightMaterial.dispose()
@@ -2751,6 +2803,7 @@ onBeforeUnmount(() => {
   tangentHandleActiveMaterial.dispose()
   tangentLineMaterial.dispose()
   decalRenderer.dispose()
+  roadRenderer.dispose()
   cameraControls.detach()
   gizmoControls.dispose()
   heatmap.dispose()
