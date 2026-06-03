@@ -46,7 +46,7 @@ export interface ProjectDTO {
 
 /** 快照摘要信息 */
 export interface SnapshotInfo {
-  id: number
+  id: string
   projectId: string
   version: number
   description: string

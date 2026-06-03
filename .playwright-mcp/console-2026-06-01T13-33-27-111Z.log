@@ -1,0 +1,46 @@
+[     855ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/templates?category=ROAD_SECTION:0
+[     856ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/projects/local-test:0
+[     864ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/templates/cross-sections:0
+[     872ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/templates:0
+[     876ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/templates/assets:0
+[   52731ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/auth/me:0
+[   52737ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/projects:0
+[   54609ms] [INFO] Autofocus processing was blocked because a document already has a focused element. @ http://localhost:5173/dashboard:0
+[   57201ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/projects:0
+[   72720ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/templates?category=ROAD_SECTION:0
+[   72721ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/projects/local-test:0
+[   72727ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/templates/cross-sections:0
+[   72731ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/templates:0
+[   72735ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/api/templates/assets:0
+[   81899ms] [WARNING] [Vue warn]: Unhandled error during execution of native event handler 
+  at <BottomTimeline> 
+  at <EditorView onVnodeUnmounted=fn<onVnodeUnmounted> ref=Ref< Proxy(Object) > > 
+  at <RouterView> 
+  at <App> @ http://localhost:5173/node_modules/.vite/deps/chunk-EXJIBF44.js?v=b3cd716d:2224
+[   81900ms] DataCloneError: Failed to execute 'postMessage' on 'Worker': [object Array] could not be cloned.
+    at http://localhost:5173/node_modules/comlink/dist/esm/comlink.mjs?v=b3cd716d:347:12
+    at new Promise (<anonymous>)
+    at requestResponseMessage (http://localhost:5173/node_modules/comlink/dist/esm/comlink.mjs?v=b3cd716d:341:12)
+    at Object.apply (http://localhost:5173/node_modules/comlink/dist/esm/comlink.mjs?v=b3cd716d:269:20)
+    at Proxy.start (http://localhost:5173/src/stores/simulationStore.ts:87:16)
+    at Proxy.wrappedAction (http://localhost:5173/node_modules/.vite/deps/pinia.js?v=7382d2dd:1107:18)
+    at store.<computed> (http://localhost:5173/node_modules/.vite/deps/pinia.js?v=7382d2dd:785:44)
+    at onPlay (http://localhost:5173/src/components/panels/BottomTimeline.vue:83:17)
+    at callWithErrorHandling (http://localhost:5173/node_modules/.vite/deps/chunk-EXJIBF44.js?v=b3cd716d:2372:19)
+    at callWithAsyncErrorHandling (http://localhost:5173/node_modules/.vite/deps/chunk-EXJIBF44.js?v=b3cd716d:2379:17)
+[   82467ms] [WARNING] [Vue warn]: Unhandled error during execution of native event handler 
+  at <BottomTimeline> 
+  at <EditorView onVnodeUnmounted=fn<onVnodeUnmounted> ref=Ref< Proxy(Object) > > 
+  at <RouterView> 
+  at <App> @ http://localhost:5173/node_modules/.vite/deps/chunk-EXJIBF44.js?v=b3cd716d:2224
+[   82468ms] DataCloneError: Failed to execute 'postMessage' on 'Worker': [object Array] could not be cloned.
+    at http://localhost:5173/node_modules/comlink/dist/esm/comlink.mjs?v=b3cd716d:347:12
+    at new Promise (<anonymous>)
+    at requestResponseMessage (http://localhost:5173/node_modules/comlink/dist/esm/comlink.mjs?v=b3cd716d:341:12)
+    at Object.apply (http://localhost:5173/node_modules/comlink/dist/esm/comlink.mjs?v=b3cd716d:269:20)
+    at Proxy.start (http://localhost:5173/src/stores/simulationStore.ts:87:16)
+    at Proxy.wrappedAction (http://localhost:5173/node_modules/.vite/deps/pinia.js?v=7382d2dd:1107:18)
+    at store.<computed> (http://localhost:5173/node_modules/.vite/deps/pinia.js?v=7382d2dd:785:44)
+    at onPlay (http://localhost:5173/src/components/panels/BottomTimeline.vue:83:17)
+    at callWithErrorHandling (http://localhost:5173/node_modules/.vite/deps/chunk-EXJIBF44.js?v=b3cd716d:2372:19)
+    at callWithAsyncErrorHandling (http://localhost:5173/node_modules/.vite/deps/chunk-EXJIBF44.js?v=b3cd716d:2379:17)

@@ -24,7 +24,7 @@ function dtoToSnapshot(dto: ProjectDTO): ProjectSnapshot {
 
 /** 快照摘要 DTO（后端响应结构） */
 interface SnapshotInfoDTO {
-  id: number
+  id: string
   projectId: string
   version: number
   description: string

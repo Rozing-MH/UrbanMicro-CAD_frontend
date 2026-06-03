@@ -1,4 +1,4 @@
-import apiClient, { type ApiResponse } from './client'
+import apiClient, { type ApiResponse, type PageResponse } from './client'
 
 export interface ReportSummary {
   id: string
@@ -18,8 +18,13 @@ export const reportApi = {
   },
 
   async list(projectId: string): Promise<ReportSummary[]> {
-    const res = await apiClient.get<ApiResponse<ReportSummary[]>>(`/reports?projectId=${projectId}`)
-    return res.data.data ?? []
+    const res = await apiClient.get<ApiResponse<ReportSummary[] | PageResponse<ReportSummary>>>(`/reports?projectId=${projectId}`)
+    const data = res.data.data
+    if (!data) return []
+    // 后端返回 PageResponse<ReportSummary>，兼容数组和分页两种格式
+    if (Array.isArray(data)) return data
+    const items = data.records ?? data.content ?? data.items ?? []
+    return items
   },
 
   async exportReport(projectId: string, format: ReportFormat, metrics: unknown): Promise<Blob> {

@@ -1,0 +1,23 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]: UrbanMicro-CAD
+    - button "退出" [ref=e7] [cursor=pointer]
+  - main [ref=e8]:
+    - generic [ref=e9]:
+      - heading "我的项目" [level=1] [ref=e10]
+      - button "+ 新建项目" [active] [ref=e11] [cursor=pointer]
+    - generic [ref=e12]: Request failed with status code 404
+    - generic [ref=e13]: 暂无项目，点击「新建项目」开始
+  - generic [ref=e15]:
+    - heading "新建项目" [level=2] [ref=e16]
+    - generic [ref=e17]:
+      - generic [ref=e18]: 项目名称
+      - textbox "项目名称" [ref=e19]:
+        - /placeholder: 例：东城区改造方案
+    - generic [ref=e20]:
+      - generic [ref=e21]: 描述（可选）
+      - textbox "描述（可选）" [ref=e22]:
+        - /placeholder: 方案简介
+    - generic [ref=e23]:
+      - button "取消" [ref=e24] [cursor=pointer]
+      - button "创建" [disabled] [ref=e25]
